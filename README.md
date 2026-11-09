@@ -78,9 +78,9 @@ The items below describe **what Alloc-X is intended to be capable of doing**, or
 - Keep rules and limit changes **outside the agent's control**; human approval is evidence, not a bypass of hard rules.
 - Maintain a trace of policy versions and who changed them.
 
-### 4. VetoLayer integration — agent decision governance
+### 4. Approval Layer — internal agent decision governance
 
-Alloc-X plans to integrate the existing [VetoLayer](https://github.com/EcstaceeLOR/VetoLayer) developer API and SDK as its independent **evaluate-before-execute** approval layer.
+Alloc-X will implement its own **Approval Layer** as a first-party, independently administered **evaluate-before-execute** governance component. The agent can request evaluations but cannot change authoritative policy or grant itself approval.
 
 - Submit structured proposed financial actions and relevant evidence for evaluation.
 - Receive **ALLOW**, **REVIEW**, or **BLOCK** outcomes.
@@ -90,11 +90,11 @@ Alloc-X plans to integrate the existing [VetoLayer](https://github.com/EcstaceeL
 - Treat missing evidence, policy failure, REVIEW, BLOCK, and unavailable governance services as **non-approval**.
 - Require separate transaction-level checks even after an ALLOW verdict.
 
-**Integration status:** VetoLayer is a separate existing project. Its Alloc-X integration must be implemented, configured, and tested.
+**Development status:** The Approval Layer is planned as an internal Alloc-X component, with separate authorization and policy administration. No third-party approval engine integration is required.
 
-### 5. FidaPact integration — payment and supplier security
+### 5. Security Layer — payment and supplier protection
 
-FidaPact is the **planned supplier authorization and payment-protection component**, not a completed or deployed protocol in this repository.
+The **Security Layer** is Alloc-X's planned first-party supplier authorization and payment-protection component. It is not yet implemented or deployed.
 
 - Register organizations' approved suppliers and verified payment destinations.
 - Verify supplier identity/authority and signed invoice instructions.
@@ -139,7 +139,7 @@ FidaPact is the **planned supplier authorization and payment-protection componen
 
 **A finalized blockchain payment is not automatically reversible.** Refunds are separately authorized transactions, not magical reversals.
 
-### 9. Offline and low-connectivity operation (NoSignal-inspired — later phase)
+### 9. Offline and low-connectivity operation
 
 - Allow operators to **capture invoices, draft payment requests, and collect evidence** without connectivity.
 - Protect locally saved drafts using encrypted, device-scoped storage.
@@ -150,7 +150,7 @@ FidaPact is the **planned supplier authorization and payment-protection componen
 - Keep treasury signing keys off offline devices.
 - Never claim that offline signatures guarantee funds or prevent all offline double spending.
 
-**Offline requests are not settled payments.** The agent cannot use live VetoLayer or XRPL checks while disconnected; final financial authorization remains online.
+**Offline requests are not settled payments.** The agent cannot use live Approval Layer or XRPL checks while disconnected; final financial authorization remains online.
 
 ### 10. Auditability, compliance evidence, and reports
 
@@ -190,8 +190,8 @@ FidaPact is the **planned supplier authorization and payment-protection componen
 USER REQUEST
   -> UNDERSTAND (invoice, payee, purpose, supporting records)
   -> ALLOCATE (eligible fund, reserve and budget checks)
-  -> GOVERN (VetoLayer: ALLOW / REVIEW / BLOCK)
-  -> VERIFY (FidaPact: authentic invoice and authorized recipient)
+  -> GOVERN (Approval Layer: ALLOW / REVIEW / BLOCK)
+  -> VERIFY (Security Layer: authentic invoice and authorized recipient)
   -> AUTHORIZE (independent financial policy controller)
   -> SIGN (protected XRPL signer quorum)
   -> SETTLE (XRPL submission and validated ledger outcome)
@@ -226,7 +226,7 @@ These are **acceptance criteria**, not evidence that the functionality already e
 
 | Phase | Priority | Target capabilities | Status |
 | --- | --- | --- | --- |
-| Agentic Finance MVP | P0 | Agent, allocations, policy controls, VetoLayer integration, initial FidaPact checks, independent XRPL signing, validated testnet transaction, baseline receipts | Planned |
+| Agentic Finance MVP | P0 | Agent, allocations, policy controls, built-in Approval Layer, initial Security Layer checks, independent XRPL signing, validated testnet transaction, baseline receipts | Planned |
 | Reliable financial platform | P1 | Durable recovery, richer fraud/evidence checks, forecasting, finance reporting, security testing, integrations | Planned |
 | Expansion and commercialization | P2 | Encrypted offline workflows, sector policy packs, production infrastructure, additional authorized payment connectors | Planned |
 
@@ -238,8 +238,8 @@ Follow the [repository issues](https://github.com/VetoLabs/Alloc-X/issues) for d
 | --- | --- |
 | Frontend | React, Next.js, TypeScript, responsive PWA |
 | Agent & application APIs | Node.js, TypeScript, schema-validated tool contracts |
-| Governance | VetoLayer API plus independently administered deterministic policies |
-| Recipient security | Planned FidaPact module and verified beneficiary registry |
+| Governance | First-party Approval Layer with independently administered deterministic policies |
+| Recipient security | First-party Security Layer and verified beneficiary registry |
 | Financial state | PostgreSQL, durable work queue, encrypted object storage |
 | XRPL integration | `xrpl.js`, exact-transaction validation, multi-signing, ledger monitor |
 | Access control | OIDC, MFA, tenant roles, segregation of duties |
@@ -263,7 +263,7 @@ These are **intended development outcomes**, to be tested through real pilots an
 
 Alloc-X is being developed under [Veto Labs](https://github.com/VetoLabs). Contributors should consult the [issue backlog](https://github.com/VetoLabs/Alloc-X/issues), document proposed behavior, and add test evidence for every financial/security feature. Never commit sensitive credentials, treasury keys, real beneficiary personal information, or confidential donor documents.
 
-**Existing integration target:** [VetoLayer](https://github.com/EcstaceeLOR/VetoLayer)  
+**Internal safeguards:** Approval Layer (governance) and Security Layer (payment verification)  
 **Repository:** [VetoLabs/Alloc-X](https://github.com/VetoLabs/Alloc-X)
 
 ---
