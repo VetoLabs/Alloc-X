@@ -11,6 +11,26 @@ Alloc-X is an **XRPL-powered autonomous AI treasury allocation and payment platf
 
 ---
 
+## Documentation
+
+<p align="center">
+  <img src="docs/assets/alloc-x-logo.jpg" alt="Alloc-X logo" width="96" />
+</p>
+
+Start with the [documentation index](./docs/README.md), or open the materials directly:
+
+- [Project concept](./docs/project-concept.pdf)
+- [Technical foundation](./docs/technical-foundation.pdf)
+- [Architecture diagram](./docs/architecture-diagram.pdf)
+- [Final product mockup](./docs/final-product-mockup.pdf)
+- [Figma overview board](./docs/figma-overview-board.png)
+- [Clickable mockup](./docs/clickable-mockup.html)
+- [Team status update](./docs/team-status-update.pdf)
+
+These materials describe the intended product direction and target architecture. They do not claim that every capability is already deployed.
+
+---
+
 ## Why Alloc-X?
 
 For many African SMEs, NGOs, universities, research institutions, and project-funded organizations, the challenge isn't just *sending* money. It's determining **which money is eligible** for a particular payment.
