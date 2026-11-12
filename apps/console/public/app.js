@@ -20,7 +20,7 @@ const icons = {
   menu: '<path d="M4 6h16M4 12h16M4 18h16"/>',
 };
 
-const state = { data: null, route: 'overview', activePaymentId: null, activeBeneficiaryId: null, agentSession: null, voiceInstruction: null, voiceState: 'IDLE', voiceTranscript: '', voiceConfidence: undefined, busy: false, mobileMenuOpen: false, wallet: { status: 'DISCONNECTED', account: null, name: null, balance: null, error: null } };
+const state = { data: null, route: 'overview', activePaymentId: null, activeBeneficiaryId: null, agentSession: null, voiceInstruction: null, voiceState: 'IDLE', voiceTranscript: '', voiceConfidence: undefined, busy: false, mobileMenuOpen: false, walletPickerOpen: false, walletInstallProvider: null, walletConnecting: null, wallet: { status: 'DISCONNECTED', account: null, name: null, balance: null, error: null } };
 const routes = {
   overview: { label: 'Overview', icon: 'grid' },
   payments: { label: 'Payments', icon: 'payment' },
@@ -47,11 +47,11 @@ let walletManager;
 
 function initializeWalletConnection() {
   const sdk = globalThis.XRPLConnect;
-  if (!sdk?.WalletManager || !sdk?.MetaMaskSnapAdapter || !sdk?.CrossmarkAdapter || !sdk?.GemWalletAdapter) {
+  if (!sdk?.WalletManager || !sdk?.CrossmarkAdapter || !sdk?.GemWalletAdapter) {
     state.wallet = { status: 'UNAVAILABLE', account: null, name: null, balance: null, error: 'XRPL Connect did not load.' };
     return;
   }
-  walletManager = new sdk.WalletManager({ adapters: [new sdk.MetaMaskSnapAdapter(), new sdk.CrossmarkAdapter(), new sdk.GemWalletAdapter()], network: 'testnet', autoConnect: true, logger: { level: 'warn', prefix: '[Alloc-X wallet]' } });
+  walletManager = new sdk.WalletManager({ adapters: [new sdk.GemWalletAdapter(), new sdk.CrossmarkAdapter()], network: 'testnet', autoConnect: true, logger: { level: 'warn', prefix: '[Alloc-X wallet]' } });
   walletManager.on('connect', (account) => walletConnected(account));
   walletManager.on('accountChanged', (account) => walletConnected(account));
   walletManager.on('networkChanged', () => refreshWalletBalance());
@@ -59,6 +59,8 @@ function initializeWalletConnection() {
 }
 
 async function walletConnected(account) {
+  state.walletPickerOpen = false;
+  state.walletInstallProvider = null;
   state.wallet = { status: 'VERIFYING', account: account.address, name: walletManager?.wallet?.name || 'XRPL wallet', balance: null, error: null };
   if (state.data) render();
   await refreshWalletBalance();
@@ -135,13 +137,14 @@ function render() {
       <nav class="nav">${nav(['overview', 'payments', 'new-payment', 'agent', 'forecast', 'schedule', 'beneficiaries'])}</nav>
       <div class="nav-label">Assurance</div>
       <nav class="nav">${nav(['security', 'audit', 'operations', 'activation', 'offline-trust', 'offline-sync', 'offline-revalidation', 'organization-capabilities', 'commercial-controls', 'nonprofit-controls', 'public-sector-controls'])}</nav>
-      <div class="sidebar-bottom"><div class="secure-state"><i class="secure-dot"></i>${esc(data.organization.environment)}</div><div class="identity"><span class="avatar">AO</span><span><strong>${esc(data.operator.name)}</strong><span>${esc(data.operator.role)}</span></span></div></div>
+      <div class="sidebar-bottom"><div class="secure-state"><i class="secure-dot"></i>${esc(data.organization.environment)}</div><div class="identity"><span class="avatar">TO</span><span><strong>${esc(data.operator.name)}</strong><span>${esc(data.operator.role)}</span></span></div></div>
     </aside>
     <button class="nav-scrim" type="button" data-action="mobile-menu" aria-label="Close navigation menu"></button>
     <section class="workspace">
-      <header class="topbar"><div class="crumb"><span>${esc(data.organization.displayName)}</span><span>›</span><strong>${esc(routes[state.route]?.label || 'Payment details')}</strong></div><div class="topbar-spacer"></div>${walletControl()}<xrpl-wallet-connector id="wallet-connector" wallets="metamask-snap,crossmark,gemwallet" show-unavailable style="--xc-primary-color:#315be9;--xc-border-radius:12px;--xc-font-family:inherit"></xrpl-wallet-connector><span class="env-badge"><i></i>XRPL Testnet</span><button class="icon-button" aria-label="Refresh workspace" data-action="reload">${svg('refresh')}</button><button class="icon-button" aria-label="Notifications">${svg('bell')}</button></header>
+      <header class="topbar"><div class="crumb"><span>${esc(data.organization.displayName)}</span><span>›</span><strong>${esc(routes[state.route]?.label || 'Payment details')}</strong></div><div class="topbar-spacer"></div>${walletControl()}<button class="wallet-launch" type="button" data-action="wallet-connect">${state.wallet.account ? 'Switch wallet' : 'Connect XRPL wallet'}</button><span class="env-badge"><i></i>XRPL Testnet</span><button class="icon-button" aria-label="Refresh workspace" data-action="reload">${svg('refresh')}</button><button class="icon-button" aria-label="Notifications">${svg('bell')}</button></header>
       <main class="page" id="main-content">${page()}</main>
     </section>
+    ${walletPicker()}
     <nav class="mobile-nav" aria-label="Mobile navigation">${nav(['overview', 'payments', 'beneficiaries', 'security'])}<button class="nav-button mobile-more${state.mobileMenuOpen ? ' active' : ''}" type="button" data-action="mobile-menu" aria-label="${state.mobileMenuOpen ? 'Close' : 'Open'} full menu" aria-expanded="${state.mobileMenuOpen}">${svg('menu')}<span>More</span></button></nav>
   </div>`;
   bind();
@@ -153,6 +156,25 @@ function walletControl() {
   if (wallet.status === 'VERIFYING') return `<button class="wallet-status checking" type="button" disabled><span class="loader"></span><span><strong>Verifying Testnet wallet</strong><small>${esc(wallet.account ? compact(wallet.account) : 'Reading validated ledger')}</small></span></button>`;
   if (['ERROR', 'UNSUPPORTED', 'BALANCE_UNAVAILABLE'].includes(wallet.status)) return `<button class="wallet-status checking" type="button" data-action="wallet-refresh" title="${esc(wallet.error || 'Balance not yet available')}"><span>${svg('wallet')}</span><span><strong>${wallet.status === 'UNSUPPORTED' ? 'Select XRPL Testnet' : 'Wallet connected'}</strong><small>${esc(wallet.account ? compact(wallet.account) : 'No account selected')}</small></span></button>`;
   return '';
+}
+
+function walletPicker() {
+  if (!state.walletPickerOpen) return '';
+  const provider = state.walletInstallProvider;
+  const name = provider === 'crossmark' ? 'Crossmark' : 'GemWallet';
+  const installUrl = provider === 'crossmark' ? 'https://crossmark.io/' : 'https://gemwallet.com/';
+  const installHelp = provider
+    ? '<div class="wallet-picker-notice" role="status"><strong>' + name + ' was not detected in this browser.</strong><span>Install and unlock the extension, select XRPL Testnet, then click ' + name + ' again. No transaction will be sent by connecting.</span><a href="' + installUrl + '" target="_blank" rel="noopener noreferrer">Visit ' + name + ' website ↗</a></div>'
+    : '';
+  return '<div class="wallet-picker-backdrop"><section class="wallet-picker" role="dialog" aria-modal="true" aria-labelledby="wallet-picker-title">' +
+    '<div class="wallet-picker-heading"><div><p class="eyebrow">XRP Ledger · Testnet</p><h2 id="wallet-picker-title">Connect your XRPL wallet</h2><p>Choose an XRPL-compatible wallet. No EVM wallet or private key is required.</p></div>' +
+    '<button type="button" class="wallet-picker-close" data-action="wallet-modal-close" aria-label="Close wallet selector">×</button></div>' +
+    '<div class="wallet-picker-options">' +
+      '<button type="button" class="wallet-picker-option" data-action="wallet-select" data-wallet-id="gemwallet" ' + (state.walletConnecting ? 'disabled' : '') + '><span class="wallet-picker-icon gem">◆</span><span><strong>GemWallet <em>Recommended</em></strong><small>XRPL browser extension · Testnet</small></span><span class="wallet-picker-arrow">›</span></button>' +
+      '<button type="button" class="wallet-picker-option" data-action="wallet-select" data-wallet-id="crossmark" ' + (state.walletConnecting ? 'disabled' : '') + '><span class="wallet-picker-icon crossmark">✦</span><span><strong>Crossmark</strong><small>XRPL extension · legacy support</small></span><span class="wallet-picker-arrow">›</span></button>' +
+    '</div>' + installHelp +
+    '<p class="wallet-picker-footnote">Wallet connection is for viewing an XRPL account and approved user actions; autonomous treasury payments require an independently protected agent signer.</p>' +
+    '</section></div>';
 }
 
 function nav(items) { return items.map((route) => `<button class="nav-button ${state.route === route ? 'active' : ''}" type="button" data-route="${route}">${svg(routes[route].icon)}<span>${routes[route].label}</span></button>`).join(''); }
@@ -188,7 +210,7 @@ function overview() {
   const connected = wallet.status === 'CONNECTED' && Boolean(wallet.balance);
   const hasWallet = Boolean(wallet.account) && wallet.status !== 'UNSUPPORTED';
   const liveBalance = connected ? money(wallet.balance.balanceXrp) : '—';
-  return `<section class="page-heading command-heading"><div><p class="eyebrow">Treasury command centre</p><h1>Good morning, Ada.</h1><p>Alloc-X has checked treasury capacity, policy health, and payments that need attention.</p></div>${button(`${svg('plus', 'nav-icon')} Create payment`, 'route-new-payment', 'primary')}</section>
+  return `<section class="page-heading command-heading"><div><p class="eyebrow">Treasury command centre</p><h1>Welcome to Alloc-X.</h1><p>Alloc-X has checked treasury capacity, policy health, and payments that need attention.</p></div>${button(`${svg('plus', 'nav-icon')} Create payment`, 'route-new-payment', 'primary')}</section>
     <section class="agent-prompt" aria-labelledby="agent-prompt-title"><div class="agent-prompt-icon">${svg('agent')}</div><form id="agent-form" class="agent-prompt-form"><label id="agent-prompt-title" for="agentMessage">What should Alloc-X handle?</label><input id="agentMessage" name="message" maxlength="500" required autocomplete="off" placeholder="Ask me to pay, plan, explain a decision, or check an allocation…"><span>Only approved records and the protected workflow can create a payment.</span></form><div class="prompt-actions"><button class="mic-button ${state.voiceState === 'LISTENING' ? 'listening' : ''}" type="button" data-action="voice-toggle" aria-label="${state.voiceState === 'LISTENING' ? 'Stop listening' : 'Give a voice instruction'}" aria-pressed="${state.voiceState === 'LISTENING'}">${svg('mic')}</button><button class="button agent-prompt-button" form="agent-form" type="submit" ${state.busy ? 'disabled' : ''}>${state.busy ? 'Working…' : `Ask Alloc-X ${svg('arrow', 'nav-icon')}`}</button></div></section>${voicePanel()}
     <div class="grid four command-metrics"><article class="card pad metric"><div class="metric-top"><span class="metric-label">Validated Testnet balance</span><span class="metric-icon">${svg('wallet')}</span></div><div class="metric-value">${liveBalance}</div><span class="metric-sub ${connected ? 'positive' : ''}">${connected ? 'Read from a validated XRPL ledger' : 'Awaiting a validated Testnet reading'}</span></article><article class="card pad metric"><div class="metric-top"><span class="metric-label">Treasury account</span><span class="metric-icon">${svg('funds')}</span></div><div class="metric-value wallet-account-value">${hasWallet ? esc(compact(wallet.account)) : '—'}</div><span class="metric-sub">${hasWallet ? esc(wallet.name) : 'No account selected'}</span></article><article class="card pad metric"><div class="metric-top"><span class="metric-label">Validated ledger</span><span class="metric-icon">${svg('check')}</span></div><div class="metric-value">${connected ? esc(wallet.balance.ledgerIndex) : '—'}</div><span class="metric-sub">${connected ? 'Network-confirmed account state' : 'No ledger reading'}</span></article><article class="card pad metric"><div class="metric-top"><span class="metric-label">Needs attention</span><span class="metric-icon">${svg('bell')}</span></div><div class="metric-value">${review}</div><span class="metric-sub">${allowed} signed allow decision${allowed === 1 ? '' : 's'}</span></article></div>
     <div class="grid two command-grid"><section class="card pad allocation-card"><div class="card-heading"><div><h2>Live treasury source</h2><p>Balance values come from the connected Testnet account, never fixtures.</p></div>${connected ? status('ALLOW', 'Validated') : `<span class="status neutral">${hasWallet ? 'Balance pending' : 'Not linked'}</span>`}</div>${connected ? `<div class="balance-label">Current XRP balance</div><div class="balance-total">${liveBalance}</div><div class="card-divider"></div><div class="row"><span>Account</span><b class="code">${esc(wallet.account)}</b></div><div class="row" style="margin-top:12px"><span>Network</span><b>XRPL Testnet</b></div><div class="row" style="margin-top:12px"><span>Ledger index</span><b>${esc(wallet.balance.ledgerIndex)}</b></div>` : hasWallet ? empty('wallet', 'XRPL account connected', 'This wallet is linked, but a validated Testnet balance is not currently available. Alloc-X will not assume or invent a balance; payment authorization still checks the permitted funding source.') : empty('wallet', 'Connect your XRPL Testnet wallet', 'Link a supported XRPL wallet to view its validated onchain balance. Funding checks occur when you request a payment.')}</section><section class="card pad security-panel command-security"><div class="card-heading"><div><p class="security-kicker">Approval layer</p><h2>Controls are active</h2><p>Every decision is signed before it can move forward.</p></div>${status('ALLOW', 'Operational')}</div><div class="control"><span class="control-icon">${svg('check')}</span><div><b>Identity and tenant checks</b><span>Server-side service assertion required</span></div></div><div class="control"><span class="control-icon">${svg('lock')}</span><div><b>Policy and evidence gates</b><span>Deterministic evaluation with reason codes</span></div></div><div class="control"><span class="control-icon">${svg('audit')}</span><div><b>Durable decision journal</b><span>${securityJournal.valid ? 'Hash chain verified' : 'Verification attention required'}</span></div></div></section></div>
@@ -276,8 +298,6 @@ function labelState(value) { return ({ AWAITING_SETTLEMENT: 'Awaiting independen
 function updateReferencePreview() { const form = document.querySelector('#payment-form'); if (!form || !state.data) return; const obligation = state.data.paymentReferences.obligations.find((item) => item.obligationId === form.obligationId.value); if (form.beneficiaryId.value !== obligation.beneficiaryId) form.beneficiaryId.value = obligation.beneficiaryId; const beneficiary = state.data.paymentReferences.beneficiaries.find((item) => item.beneficiaryId === form.beneficiaryId.value); const allocation = state.data.paymentReferences.allocations.find((item) => item.allocationId === form.allocationId.value); const preview = document.querySelector('#reference-preview'); preview.innerHTML = `<div class="row"><span>Amount (authoritative)</span><b class="amount">${money(obligation.amount)}</b></div><div class="row"><span>Beneficiary destination</span><b>Approved ${esc(beneficiary.label)} wallet · v${beneficiary.walletVersion}</b></div><div class="row"><span>Source allocation</span><b>${esc(allocation.displayName)}</b></div><div class="row"><span>Evidence requirement</span><b>Verified invoice attached</b></div>`; }
 
 function bind() {
-  const connector = document.querySelector('#wallet-connector');
-  if (connector && walletManager) connector.setWalletManager(walletManager);
   if (voiceCapture && state.voiceState === 'LISTENING') updateVoicePreview(voiceCapture);
   document.querySelectorAll('[data-route]').forEach((element) => element.addEventListener('click', (event) => { event.preventDefault(); state.mobileMenuOpen = false; state.route = element.dataset.route; state.activePaymentId = null; state.activeBeneficiaryId = null; render(); }));
   document.querySelectorAll('[data-action]').forEach((element) => element.addEventListener('click', onAction));
@@ -291,7 +311,31 @@ function bind() {
   if (limitForm) limitForm.addEventListener('submit', requestLimitChange);
 }
 
-async function onAction(event) { const action = event.currentTarget.dataset.action; if (action === 'enter-workspace') return enterWorkspace(); if (action === 'mobile-menu') { state.mobileMenuOpen = !state.mobileMenuOpen; render(); return; } if (action === 'wallet-connect') { const connector = document.querySelector('#wallet-connector'); if (!walletManager || !connector) return toast('Wallet connection unavailable', 'XRPL Connect did not initialize.', true); try { await connector.open(); } catch (error) { toast('Wallet connection failed', error.message, true); } return; } if (action === 'wallet-disconnect') { try { await walletManager?.disconnect(); } catch (error) { toast('Wallet disconnect failed', error.message, true); } return; } if (action === 'wallet-refresh') return refreshWalletBalance(); if (action === 'voice-toggle') return toggleVoiceCapture(); if (action === 'voice-confirm') return confirmVoiceInstruction(); if (action === 'voice-discard') { state.voiceInstruction = null; state.voiceTranscript = ''; state.voiceState = 'IDLE'; render(); return; } if (action === 'reload') { await load(); return refreshWalletBalance(); } if (action === 'route-new-payment') { state.route = 'new-payment'; render(); return; } if (action === 'route-payments') { state.route = 'payments'; render(); return; } if (action === 'route-beneficiaries') { state.route = 'beneficiaries'; render(); return; } if (action === 'open-payment') { state.activePaymentId = event.currentTarget.dataset.paymentId; state.route = 'payment-detail'; render(); return; } if (action === 'open-beneficiary') { state.activeBeneficiaryId = event.currentTarget.dataset.beneficiaryId; state.route = 'beneficiary-detail'; render(); return; } if (action === 'recover-decision') return recoverDecision(event.currentTarget.dataset.paymentId); if (action === 'download-receipt') return downloadReceipt(event.currentTarget.dataset.receiptId); if (action === 'release-freeze') return releaseEmergencyFreeze(event.currentTarget.dataset.freezeId); if (action === 'approve-limit-change') return advanceLimitChange(event.currentTarget.dataset.changeId, 'approve'); if (action === 'escalate-limit-change') return advanceLimitChange(event.currentTarget.dataset.changeId, 'escalate'); }
+async function connectXrplWallet(walletId) {
+  if (!['gemwallet', 'crossmark'].includes(walletId) || state.walletConnecting) return;
+  if (!walletManager) return toast('Wallet connection unavailable', 'XRPL Connect is not available in this browser.', true);
+  state.walletConnecting = walletId;
+  state.walletInstallProvider = null;
+  render();
+  try {
+    const account = await walletManager.connect(walletId);
+    if (!account?.address) throw new Error('The wallet did not return an XRPL account.');
+    state.walletPickerOpen = false;
+  } catch (error) {
+    const code = String(error?.code || '');
+    const message = String(error?.message || 'Could not connect to this XRPL wallet.');
+    if (code === 'WALLET_NOT_AVAILABLE' || code === 'WALLET_NOT_INSTALLED' || /not available|not installed|not detected|extension/i.test(message)) {
+      state.walletInstallProvider = walletId;
+    } else if (!/rejected|cancelled|canceled/i.test(message) && code !== 'CONNECTION_REJECTED') {
+      toast('Wallet could not connect', message, true);
+    }
+  } finally {
+    state.walletConnecting = null;
+    render();
+  }
+}
+
+async function onAction(event) { const action = event.currentTarget.dataset.action; if (action === 'enter-workspace') return enterWorkspace(); if (action === 'wallet-modal-close') { state.walletPickerOpen = false; state.walletInstallProvider = null; render(); return; } if (action === 'wallet-select') return connectXrplWallet(event.currentTarget.dataset.walletId); if (action === 'mobile-menu') { state.mobileMenuOpen = !state.mobileMenuOpen; render(); return; } if (action === 'wallet-connect') { state.walletPickerOpen = true; state.walletInstallProvider = null; render(); return; } if (action === 'wallet-disconnect') { try { await walletManager?.disconnect(); } catch (error) { toast('Wallet disconnect failed', error.message, true); } return; } if (action === 'wallet-refresh') return refreshWalletBalance(); if (action === 'voice-toggle') return toggleVoiceCapture(); if (action === 'voice-confirm') return confirmVoiceInstruction(); if (action === 'voice-discard') { state.voiceInstruction = null; state.voiceTranscript = ''; state.voiceState = 'IDLE'; render(); return; } if (action === 'reload') { await load(); return refreshWalletBalance(); } if (action === 'route-new-payment') { state.route = 'new-payment'; render(); return; } if (action === 'route-payments') { state.route = 'payments'; render(); return; } if (action === 'route-beneficiaries') { state.route = 'beneficiaries'; render(); return; } if (action === 'open-payment') { state.activePaymentId = event.currentTarget.dataset.paymentId; state.route = 'payment-detail'; render(); return; } if (action === 'open-beneficiary') { state.activeBeneficiaryId = event.currentTarget.dataset.beneficiaryId; state.route = 'beneficiary-detail'; render(); return; } if (action === 'recover-decision') return recoverDecision(event.currentTarget.dataset.paymentId); if (action === 'download-receipt') return downloadReceipt(event.currentTarget.dataset.receiptId); if (action === 'release-freeze') return releaseEmergencyFreeze(event.currentTarget.dataset.freezeId); if (action === 'approve-limit-change') return advanceLimitChange(event.currentTarget.dataset.changeId, 'approve'); if (action === 'escalate-limit-change') return advanceLimitChange(event.currentTarget.dataset.changeId, 'escalate'); }
 
 async function submitPayment(event) { event.preventDefault(); if (state.busy) return; const form = event.currentTarget; state.busy = true; render(); try { const response = await api('/api/payments', { method: 'POST', body: JSON.stringify({ obligationId: form.obligationId.value, allocationId: form.allocationId.value, beneficiaryId: form.beneficiaryId.value }) }); state.data = await api('/api/bootstrap'); state.activePaymentId = response.payment.paymentId; state.route = 'payment-detail'; toast('Payment assessment recorded', response.message); } catch (error) { toast(/insufficient|allocation.*capacity|reserve|available balance|funds/i.test(error.message) ? 'Selected funding source cannot cover this payment' : 'Payment could not be created', error.message, true); } finally { state.busy = false; render(); } }
 
