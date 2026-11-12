@@ -1,0 +1,7 @@
+{
+  "name": "@alloc-x/mainnet-activation",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Fail-closed XRPL Mainnet readiness, pilot rollout, limits, reconciliation, freeze, and rollback controls for Alloc-X."
+}
