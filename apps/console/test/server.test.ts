@@ -69,8 +69,15 @@ test("console exposes server-owned payment references and records a signed decis
     const appScript = await (await fetch(`${baseUrl}/app.js`)).text();
     assert.match(appScript, /reducedMotion \? 650 : 1700/);
     assert.doesNotMatch(appScript, /reducedMotion \? 0 : 1700/);
-    assert.match(appScript, /new sdk\.MetaMaskSnapAdapter\(\)/);
-    assert.match(appScript, /wallets="metamask-snap,crossmark,gemwallet"/);
+    assert.match(appScript, /new sdk\\.GemWalletAdapter\\(\\)/);
+    assert.match(appScript, /new sdk\\.CrossmarkAdapter\\(\\)/);
+    assert.match(appScript, /walletManager\\.connect\\(walletId\\)/);
+    assert.match(appScript, /data-wallet-id="gemwallet"/);
+    assert.match(appScript, /data-wallet-id="crossmark"/);
+    assert.doesNotMatch(appScript, /MetaMaskSnapAdapter|metamask-snap/);
+    assert.doesNotMatch(appScript, /xrpl-wallet-connector/);
+    assert.doesNotMatch(appScript, /Good morning, Ada/);
+    assert.match(appScript, /Welcome to Alloc-X\\./);
     assert.match(appScript, /recognition\.continuous = true/);
     assert.match(appScript, /startVoiceSegment\(session\)/);
     assert.ok(appScript.includes("${button('Stop recording', 'voice-toggle', 'secondary')}"), "Stop recording must be an invoked template helper.");
@@ -84,7 +91,9 @@ test("console exposes server-owned payment references and records a signed decis
     assert.doesNotMatch(stylesheet, /\.launch-film\{display:none\}/);
     assert.match(stylesheet, /max-width: 1100px/);
     assert.match(stylesheet, /\.shell\.nav-open \.sidebar/);
-    assert.match(stylesheet, /\.voice-live-transcript/);
+    assert.match(stylesheet, /\\.voice-live-transcript/);
+    assert.match(stylesheet, /\\.wallet-picker-option/);
+    assert.match(stylesheet, /\\.wallet-picker-backdrop/);
     const first = bootstrap.paymentReferences.obligations[0]!;
     const paymentResponse = await fetch(`${baseUrl}/api/payments`, {
       method: "POST",
