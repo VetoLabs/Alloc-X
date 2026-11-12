@@ -71,9 +71,18 @@ test("console exposes server-owned payment references and records a signed decis
     assert.doesNotMatch(appScript, /reducedMotion \? 0 : 1700/);
     assert.match(appScript, /new sdk\.MetaMaskSnapAdapter\(\)/);
     assert.match(appScript, /wallets="metamask-snap,crossmark,gemwallet"/);
+    assert.match(appScript, /recognition\.continuous = true/);
+    assert.match(appScript, /startVoiceSegment\(session\)/);
+    assert.match(appScript, /state\.mobileMenuOpen/);
+    assert.match(appScript, /data-action="mobile-menu"/);
+    assert.doesNotMatch(appScript, /No Testnet treasury connected/);
+    assert.doesNotMatch(appScript, /Wallet needs attention/);
     const stylesheet = await (await fetch(`${baseUrl}/styles.css`)).text();
     assert.match(stylesheet, /launch-film\.reduced-motion\{display:grid\}/);
     assert.doesNotMatch(stylesheet, /\.launch-film\{display:none\}/);
+    assert.match(stylesheet, /max-width: 1100px/);
+    assert.match(stylesheet, /\.shell\.nav-open \.sidebar/);
+    assert.match(stylesheet, /\.voice-live-transcript/);
     const first = bootstrap.paymentReferences.obligations[0]!;
     const paymentResponse = await fetch(`${baseUrl}/api/payments`, {
       method: "POST",
