@@ -1,0 +1,7 @@
+{
+  "name": "@alloc-x/fraud-scoring",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "description": "Versioned, deterministic fraud and anomaly scoring for payment decisions."
+}
