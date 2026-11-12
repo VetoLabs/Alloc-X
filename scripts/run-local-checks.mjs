@@ -23,6 +23,7 @@ const checks = [
       "packages/accounting/test/accounting.test.ts",
       "packages/payment-intents/test/payment-intents.test.ts",
       "services/approval-layer/test/approval-layer.test.ts",
+      "services/approval-layer/test/durable-decision-journal.test.ts",
     ],
   ],
   [
