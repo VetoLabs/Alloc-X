@@ -73,6 +73,8 @@ test("console exposes server-owned payment references and records a signed decis
     assert.match(appScript, /wallets="metamask-snap,crossmark,gemwallet"/);
     assert.match(appScript, /recognition\.continuous = true/);
     assert.match(appScript, /startVoiceSegment\(session\)/);
+    assert.ok(appScript.includes("${button('Stop recording', 'voice-toggle', 'secondary')}"), "Stop recording must be an invoked template helper.");
+    assert.ok(!appScript.includes("${button}('Stop recording'"), "Do not interpolate the button function source as visible text.");
     assert.match(appScript, /state\.mobileMenuOpen/);
     assert.match(appScript, /data-action="mobile-menu"/);
     assert.doesNotMatch(appScript, /No Testnet treasury connected/);
