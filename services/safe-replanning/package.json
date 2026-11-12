@@ -1,0 +1,7 @@
+{
+  "name": "@alloc-x/safe-replanning",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Bounded reason-code based payment replanning for Alloc-X."
+}
