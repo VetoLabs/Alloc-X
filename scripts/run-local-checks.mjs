@@ -17,11 +17,18 @@ const checks = [
       "packages/contracts/test/contracts.test.ts",
       "packages/contracts/test/domain.test.ts",
       "packages/authorization/test/authorization.test.ts",
+      "packages/policy-engine/test/policy-engine.test.ts",
+      "packages/policy-engine/test/policy-boundaries.test.ts",
     ],
   ],
   [
     "integration tests",
-    ["--test", "--test-isolation=none", "tests/integration/environment-boundaries.test.ts"],
+    [
+      "--test",
+      "--test-isolation=none",
+      "tests/integration/environment-boundaries.test.ts",
+      "tests/integration/security-boundary.test.ts",
+    ],
   ],
 ];
 

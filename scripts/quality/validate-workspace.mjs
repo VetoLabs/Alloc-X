@@ -24,8 +24,10 @@ const requiredPaths = [
   "packages/config/package.json",
   "packages/contracts/package.json",
   "packages/authorization/package.json",
+  "packages/policy-engine/package.json",
   "tests/README.md",
   "tests/integration/environment-boundaries.test.ts",
+  "tests/integration/security-boundary.test.ts",
   "infra/schemas/environment.schema.json",
 ];
 
