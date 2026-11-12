@@ -25,6 +25,7 @@ const requiredPaths = [
   "packages/contracts/package.json",
   "packages/authorization/package.json",
   "packages/policy-engine/package.json",
+  "packages/audit-chain/package.json",
   "tests/README.md",
   "tests/integration/environment-boundaries.test.ts",
   "tests/integration/security-boundary.test.ts",
