@@ -20,6 +20,7 @@ const checks = [
       "packages/policy-engine/test/policy-engine.test.ts",
       "packages/policy-engine/test/policy-boundaries.test.ts",
       "packages/audit-chain/test/audit-chain.test.ts",
+      "packages/accounting/test/accounting.test.ts",
     ],
   ],
   [
