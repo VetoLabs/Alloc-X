@@ -84,6 +84,8 @@ test("console exposes server-owned payment references and records a signed decis
     assert.ok(!appScript.includes("${button}('Stop recording'"), "Do not interpolate the button function source as visible text.");
     assert.match(appScript, /state\.mobileMenuOpen/);
     assert.match(appScript, /data-action="mobile-menu"/);
+    assert.ok(appScript.includes("function scrollToPageStart()"));
+    assert.ok(appScript.includes("render(); scrollToPageStart();"));
     assert.doesNotMatch(appScript, /No Testnet treasury connected/);
     assert.doesNotMatch(appScript, /Wallet needs attention/);
     const stylesheet = await (await fetch(`${baseUrl}/styles.css`)).text();
@@ -94,6 +96,8 @@ test("console exposes server-owned payment references and records a signed decis
     assert.match(stylesheet, /\\.voice-live-transcript/);
     assert.match(stylesheet, /\\.wallet-picker-option/);
     assert.match(stylesheet, /\\.wallet-picker-backdrop/);
+    assert.ok(stylesheet.includes("/* Audit navigation scroll containment */"));
+    assert.ok(stylesheet.includes("overscroll-behavior-y: contain"));
     const first = bootstrap.paymentReferences.obligations[0]!;
     const paymentResponse = await fetch(`${baseUrl}/api/payments`, {
       method: "POST",
