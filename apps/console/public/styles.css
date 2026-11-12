@@ -157,3 +157,36 @@ html, body, #app { max-width: 100%; overflow-x: clip; }
 @media(max-width:1100px){.wallet-launch{min-height:38px;padding:9px 11px;font-size:11px}}
 @media(max-width:680px){.wallet-picker-backdrop{padding:12px;align-items:center}.wallet-picker{padding:19px;border-radius:17px}.wallet-picker-heading h2{font-size:19px}.wallet-launch{font-size:10px;min-height:34px;padding:8px 10px;white-space:normal;}}
 @media(max-width:440px){.wallet-picker-option{padding:11px}.wallet-launch{flex:1 1 120px}.wallet-picker-icon{flex-basis:40px;height:40px}}
+
+
+/* Audit navigation scroll containment.
+   Keep the desktop navigation within its own viewport-height scroll area.
+   Previously the contents overflowed beyond the sidebar's fixed height and
+   appeared light-on-light when the document itself scrolled. */
+@media (min-width: 1101px) {
+  .shell { align-items: start; min-height: 100dvh; }
+  .sidebar {
+    position: sticky;
+    top: 0;
+    height: 100dvh;
+    max-height: 100dvh;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(149,179,240,.42) transparent;
+    background: #071b3f;
+  }
+  .sidebar-bottom { flex-shrink: 0; }
+  .workspace { min-height: 100dvh; }
+}
+@media (max-width: 1100px) {
+  .sidebar {
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    overscroll-behavior-y: contain;
+    background: #071b3f;
+  }
+}
