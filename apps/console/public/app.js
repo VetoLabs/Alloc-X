@@ -162,7 +162,7 @@ function walletPicker() {
   if (!state.walletPickerOpen) return '';
   const provider = state.walletInstallProvider;
   const name = provider === 'crossmark' ? 'Crossmark' : 'GemWallet';
-  const installUrl = provider === 'crossmark' ? 'https://crossmark.io/' : 'https://gemwallet.com/';
+  const installUrl = provider === 'crossmark' ? 'https://crossmark.io/' : 'https://chromewebstore.google.com/detail/gemwallet/egebedonbdapoieedfcfkofloclfghab';
   const installHelp = provider
     ? '<div class="wallet-picker-notice" role="status"><strong>' + name + ' was not detected in this browser.</strong><span>Install and unlock the extension, select XRPL Testnet, then click ' + name + ' again. No transaction will be sent by connecting.</span><a href="' + installUrl + '" target="_blank" rel="noopener noreferrer">Visit ' + name + ' website ↗</a></div>'
     : '';
