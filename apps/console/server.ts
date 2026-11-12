@@ -16,7 +16,7 @@ import {
   ApprovalLayerService,
   type EvaluationReceipt,
 } from "../../services/approval-layer/src/index.ts";
-import { type AutonomousPaymentPath } from "../../services/payment-path/src/index.ts";
+import type { AutonomousPaymentPath } from "../../services/payment-path/src/index.ts";
 import { FileSecurityControlStore, TreasurySecurityControls, type ControlActor, type FreezeScope, type LimitControl } from "../../services/security-controls/src/index.ts";
 import { FileReceiptStore, ReceiptBuilder } from "../../services/receipt-builder/src/index.ts";
 import { AllocationAgentService, FileAllocationAgentSessionStore, type ResolvedBeneficiary } from "../../services/allocation-agent/src/index.ts";
