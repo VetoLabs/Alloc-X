@@ -1,0 +1,7 @@
+{
+  "name": "@alloc-x/voice-instructions",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "description": "Confirmed voice-instruction boundary for Alloc-X."
+}
