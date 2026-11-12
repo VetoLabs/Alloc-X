@@ -106,3 +106,5 @@ function requireKeyId(value: unknown): asserts value is string { if (typeof valu
 function requireDigest(value: unknown, name: string): asserts value is string { if (typeof value !== "string" || !/^sha256:[a-f0-9]{64}$/.test(value)) throw new TypeError(`${name} is invalid.`); }
 function requireTimestamp(value: unknown, name: string): asserts value is string { if (typeof value !== "string" || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(value) || !Number.isFinite(Date.parse(value))) throw new TypeError(`${name} is invalid.`); }
 function frozen<T>(value: T): T { return Object.freeze(value); }
+
+export * from "./durable-decision-journal.ts";

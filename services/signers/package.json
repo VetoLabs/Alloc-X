@@ -1,0 +1,10 @@
+{
+  "name": "@alloc-x/signers",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Isolated XRPL quorum signer boundary for Alloc-X.",
+  "dependencies": {
+    "xrpl": "5.3.0"
+  }
+}
