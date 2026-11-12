@@ -1,0 +1,7 @@
+{
+  "name": "@alloc-x/procurement-matching",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "description": "Policy-ready purchase-order, invoice, and delivery matching."
+}
