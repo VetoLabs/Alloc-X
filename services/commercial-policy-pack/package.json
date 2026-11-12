@@ -1,0 +1,7 @@
+{
+  "name": "@alloc-x/commercial-policy-pack",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Commercial organization policy-pack controls for Alloc-X."
+}
