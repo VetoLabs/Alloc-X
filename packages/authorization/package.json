@@ -1,0 +1,8 @@
+{
+  "name": "@alloc-x/authorization",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "description": "Server-side identity verification boundary and treasury authorization policies."
+}

@@ -16,6 +16,7 @@ const checks = [
       "packages/config/test/config.test.ts",
       "packages/contracts/test/contracts.test.ts",
       "packages/contracts/test/domain.test.ts",
+      "packages/authorization/test/authorization.test.ts",
     ],
   ],
   [
