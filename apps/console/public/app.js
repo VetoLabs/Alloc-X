@@ -353,7 +353,7 @@ function startVoiceSegment(session) {
     if (voiceCapture !== session) return;
     const finalized = [];
     const interim = [];
-    for (const result of event.results) {
+    for (const result of Array.from(event.results)) {
       const text = result[0]?.transcript?.trim();
       if (!text) continue;
       (result.isFinal ? finalized : interim).push(text);
