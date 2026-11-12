@@ -26,6 +26,7 @@ const checks = [
       "packages/beneficiaries/test/beneficiary-policy.integration.test.ts",
       "services/approval-layer/test/approval-layer.test.ts",
       "services/approval-layer/test/durable-decision-journal.test.ts",
+      "services/xrpl-adapter/test/xrpl-adapter.test.ts",
     ],
   ],
   [
