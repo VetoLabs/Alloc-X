@@ -165,7 +165,7 @@ export async function createConsoleServer(options: ConsoleServerOptions = {}): P
         recordOperationalSnapshot(operationalMonitor, payments, options.settlement !== undefined);
         return json(response, 200, {
           organization: { id: organizationId, displayName: "Meridian Health Trust", environment: "Local secure workspace" },
-          operator: { name: "Ada Okafor", role: "Treasury operator" },
+          operator: { name: "Demo operator", role: "Treasury workspace" },
           treasury: accounting.treasurySnapshot(organizationId, "XRP"),
           cashForecast: cashForecast(accounting),
           paymentSchedule: paymentSchedule(accounting),
