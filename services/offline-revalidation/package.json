@@ -1,0 +1,7 @@
+{
+  "name": "@alloc-x/offline-revalidation",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Fail-closed fresh online revalidation gate for Alloc-X offline-prepared payments."
+}

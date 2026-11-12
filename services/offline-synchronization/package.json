@@ -1,0 +1,7 @@
+{
+  "name": "@alloc-x/offline-synchronization",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Resumable server-ordered synchronization and explicit conflict resolution for Alloc-X offline work."
+}

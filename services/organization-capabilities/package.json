@@ -1,0 +1,7 @@
+{
+  "name": "@alloc-x/organization-capabilities",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Governed organization capability configuration for Alloc-X policy packs and integrations."
+}
