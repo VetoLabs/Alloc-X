@@ -1,0 +1,7 @@
+{
+  "name": "@alloc-x/payment-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Durable canonical transaction construction and submission worker."
+}

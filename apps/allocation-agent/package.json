@@ -1,0 +1,7 @@
+{
+  "name": "@alloc-x/allocation-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Durable, tool-constrained Alloc-X allocation agent."
+}
