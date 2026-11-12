@@ -1,0 +1,7 @@
+{
+  "name": "@alloc-x/ledger-monitor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Read-only XRPL monitoring and treasury reconciliation service."
+}

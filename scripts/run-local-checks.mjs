@@ -28,6 +28,11 @@ const checks = [
       "services/approval-layer/test/durable-decision-journal.test.ts",
       "services/xrpl-adapter/test/xrpl-adapter.test.ts",
       "services/signers/test/signers.test.ts",
+      "services/payment-orchestrator/test/payment-orchestrator.test.ts",
+      "services/ledger-monitor/test/ledger-monitor.test.ts",
+      "services/payment-path/test/payment-path.test.ts",
+      "services/policy-source/test/policy-source.test.ts",
+      "services/policy-registry/test/policy-registry.test.ts",
     ],
   ],
   [

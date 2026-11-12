@@ -1,0 +1,10 @@
+{
+  "name": "@alloc-x/payment-orchestrator",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Durable, idempotent payment orchestration for Alloc-X.",
+  "dependencies": {
+    "xrpl": "5.3.0"
+  }
+}
