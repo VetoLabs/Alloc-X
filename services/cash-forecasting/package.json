@@ -1,0 +1,7 @@
+{
+  "name": "@alloc-x/cash-forecasting",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Read-only, scenario-based cash runway forecasting for Alloc-X."
+}

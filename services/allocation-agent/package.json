@@ -1,0 +1,7 @@
+{
+  "name": "@alloc-x/allocation-agent-service",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "description": "Durable, bounded allocation-agent sessions for treasury requests."
+}

@@ -1,0 +1,7 @@
+{
+  "name": "@alloc-x/payment-scheduling",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Read-only policy-bound payment scheduling recommendations for Alloc-X."
+}
