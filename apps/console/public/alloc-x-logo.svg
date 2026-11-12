@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1600" viewBox="0 0 1000 1000" role="img" aria-labelledby="title description">
+  <title id="title">Alloc-X Protected Ledger Core</title>
+  <desc id="description">Four controlled payment stages converge around one protected ledger record.</desc>
+  <path d="M102 132h300l164 178-83 83-105-108H258l-71 70L76 213Z" fill="#071B3F"/>
+  <path d="M650 132h268L620 558l-83-83 105-137-76-82Z" fill="#071B3F"/>
+  <path d="M354 390h89v183l39 48-104 247H84l282-418Z" fill="#071B3F"/>
+  <path d="M515 590h105l79-98 219 376H573L465 700Z" fill="#071B3F"/>
+  <rect x="421" y="356" width="174" height="174" rx="10" fill="#18C7B1"/>
+</svg>

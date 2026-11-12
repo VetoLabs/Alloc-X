@@ -19,12 +19,14 @@
     "format": "node scripts/quality/format-json.mjs",
     "format:check": "node scripts/quality/check-format.mjs",
     "lint": "node scripts/quality/lint.mjs",
-    "test": "node --test --test-isolation=none packages/config/test/config.test.ts packages/contracts/test/contracts.test.ts packages/contracts/test/domain.test.ts packages/authorization/test/authorization.test.ts packages/policy-engine/test/policy-engine.test.ts packages/policy-engine/test/policy-boundaries.test.ts packages/audit-chain/test/audit-chain.test.ts packages/accounting/test/accounting.test.ts tests/integration/environment-boundaries.test.ts tests/integration/security-boundary.test.ts",
-    "test:unit": "node --test --test-isolation=none packages/config/test/config.test.ts packages/contracts/test/contracts.test.ts packages/contracts/test/domain.test.ts packages/authorization/test/authorization.test.ts packages/policy-engine/test/policy-engine.test.ts packages/policy-engine/test/policy-boundaries.test.ts packages/audit-chain/test/audit-chain.test.ts packages/accounting/test/accounting.test.ts",
+    "test": "node --test --test-isolation=none packages/config/test/config.test.ts packages/contracts/test/contracts.test.ts packages/contracts/test/domain.test.ts packages/authorization/test/authorization.test.ts packages/policy-engine/test/policy-engine.test.ts packages/policy-engine/test/policy-boundaries.test.ts packages/audit-chain/test/audit-chain.test.ts packages/accounting/test/accounting.test.ts packages/payment-intents/test/payment-intents.test.ts services/approval-layer/test/approval-layer.test.ts tests/integration/environment-boundaries.test.ts tests/integration/security-boundary.test.ts",
+    "test:unit": "node --test --test-isolation=none packages/config/test/config.test.ts packages/contracts/test/contracts.test.ts packages/contracts/test/domain.test.ts packages/authorization/test/authorization.test.ts packages/policy-engine/test/policy-engine.test.ts packages/policy-engine/test/policy-boundaries.test.ts packages/audit-chain/test/audit-chain.test.ts packages/accounting/test/accounting.test.ts packages/payment-intents/test/payment-intents.test.ts services/approval-layer/test/approval-layer.test.ts",
     "test:integration": "node --test --test-isolation=none tests/integration/environment-boundaries.test.ts tests/integration/security-boundary.test.ts",
     "test:contracts": "node --test --test-isolation=none packages/contracts/test/contracts.test.ts packages/contracts/test/domain.test.ts",
     "test:policy": "node --test --test-isolation=none packages/policy-engine/test/policy-engine.test.ts packages/policy-engine/test/policy-boundaries.test.ts",
     "test:audit": "node --test --test-isolation=none packages/audit-chain/test/audit-chain.test.ts",
-    "test:accounting": "node --test --test-isolation=none packages/accounting/test/accounting.test.ts"
+    "test:accounting": "node --test --test-isolation=none packages/accounting/test/accounting.test.ts",
+    "test:intents": "node --test --test-isolation=none packages/payment-intents/test/payment-intents.test.ts",
+    "test:approval-layer": "node --test --test-isolation=none services/approval-layer/test/approval-layer.test.ts"
   }
 }

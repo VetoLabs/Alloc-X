@@ -1,0 +1,15 @@
+{
+  "name": "@alloc-x/console",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Alloc-X treasury and security operator console.",
+  "scripts": {
+    "start": "node --use-system-ca server.ts",
+    "test": "node --test --test-isolation=none test/server.test.ts"
+  },
+  "dependencies": {
+    "xrpl": "^5.3.0",
+    "xrpl-connect": "^1.0.0"
+  }
+}
