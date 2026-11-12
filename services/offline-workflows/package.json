@@ -1,1 +1,7 @@
-
+{
+  "name": "@alloc-x/offline-workflows",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Preparation-only treasury workflows backed by Alloc-X device-bound offline storage."
+}

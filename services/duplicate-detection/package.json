@@ -1,1 +1,7 @@
-
+{
+  "name": "@alloc-x/duplicate-detection",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "description": "Deterministic duplicate-evidence and split-payment detection."
+}

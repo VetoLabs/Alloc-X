@@ -1,1 +1,7 @@
-
+{
+  "name": "@alloc-x/data-governance",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Policy-enforced privacy, retention, residency, export, deletion, and access review for Alloc-X."
+}
