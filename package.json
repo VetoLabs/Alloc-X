@@ -31,6 +31,11 @@
     "test:beneficiaries": "node --test --test-isolation=none packages/beneficiaries/test/beneficiaries.test.ts packages/beneficiaries/test/beneficiary-policy.integration.test.ts",
     "test:xrpl-adapter": "node --test --test-isolation=none services/xrpl-adapter/test/xrpl-adapter.test.ts",
     "test:xrpl:integration": "node --use-system-ca --test --test-isolation=none services/xrpl-adapter/test/xrpl-adapter.integration.test.ts services/signers/test/signers.integration.test.ts",
-    "test:signers": "node --test --test-isolation=none services/signers/test/signers.test.ts"
+    "test:signers": "node --test --test-isolation=none services/signers/test/signers.test.ts",
+    "test:orchestrator": "node --test --test-isolation=none services/payment-orchestrator/test/payment-orchestrator.test.ts",
+    "test:ledger-monitor": "node --test --test-isolation=none services/ledger-monitor/test/ledger-monitor.test.ts",
+    "test:payment-path": "node --test --test-isolation=none services/payment-path/test/payment-path.test.ts",
+    "test:policy-source": "node --test --test-isolation=none services/policy-source/test/policy-source.test.ts",
+    "test:policy-registry": "node --test --test-isolation=none services/policy-registry/test/policy-registry.test.ts"
   }
 }
