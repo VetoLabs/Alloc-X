@@ -1,0 +1,7 @@
+{
+  "name": "@alloc-x/resilience-recovery",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Verified backup, restoration, timeout, and recovery-exercise infrastructure for Alloc-X."
+}
