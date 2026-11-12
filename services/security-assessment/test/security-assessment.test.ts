@@ -1,0 +1,12 @@
+import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test from "node:test";
+import { FileAssessmentStore, SecurityAssessmentService } from "../src/index.ts";
+
+const digest = (value: string) => `sha256:${value.repeat(64).slice(0, 64)}`;
+const assessment = { assessmentId: "assessment_external_001", productOrganization: "Alloc-X", assessorOrganization: "Independent Security Partners", assessorPrincipalId: "principal_external_assessor", independenceAttested: true, areas: ["architecture", "penetration-test", "dependencies", "infrastructure"] as const, startedAt: "2026-11-10T09:00:00.000Z" };
+
+test("blocks production until settlement findings pass independent retest", async () => { const root = await mkdtemp(join(tmpdir(), "alloc-x-assessment-")); try { const service = new SecurityAssessmentService(new FileAssessmentStore(join(root, "assessment.json"))); await service.begin(assessment); await service.addFinding({ findingId: "finding_signer_auth", assessmentId: assessment.assessmentId, area: "penetration-test", severity: "high", affectsSettlement: true, title: "Signer authentication hardening", evidenceDigest: digest("a") }); assert.equal(service.productionGate().allowed, false); await service.remediate({ findingId: "finding_signer_auth", remediationDigest: digest("b"), remediatedAt: "2026-11-10T12:00:00.000Z" }); await assert.rejects(() => service.retest({ findingId: "finding_signer_auth", assessorPrincipalId: "principal_product_builder", retestDigest: digest("c"), retestedAt: "2026-11-10T13:00:00.000Z", passed: true }), /independent assessor/i); await service.retest({ findingId: "finding_signer_auth", assessorPrincipalId: assessment.assessorPrincipalId, retestDigest: digest("c"), retestedAt: "2026-11-10T13:00:00.000Z", passed: true }); await service.complete({ completedAt: "2026-11-10T14:00:00.000Z" }); assert.equal(service.productionGate().allowed, true); } finally { await rm(root, { recursive: true, force: true }); } });
+test("rejects self-assessment and incomplete scope", async () => { const root = await mkdtemp(join(tmpdir(), "alloc-x-assessment-")); try { const service = new SecurityAssessmentService(new FileAssessmentStore(join(root, "assessment.json"))); await assert.rejects(() => service.begin({ ...assessment, assessorOrganization: "Alloc-X" }), /independence/i); } finally { await rm(root, { recursive: true, force: true }); } });
