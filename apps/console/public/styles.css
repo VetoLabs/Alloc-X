@@ -20,3 +20,110 @@
 @media(max-width:1100px){.shell{grid-template-columns:220px minmax(0,1fr)}.sidebar{width:220px}.page,.topbar{padding-left:26px;padding-right:26px}.agent-prompt{grid-template-columns:48px minmax(0,1fr)}.agent-prompt-button{grid-column:2;justify-self:start}}
 @media(max-width:780px){.page{padding:24px 17px 88px}.topbar{height:66px}.crumb span:first-child{display:none}.crumb strong{font-size:15px}.agent-prompt{grid-template-columns:42px minmax(0,1fr);gap:12px;padding:15px;border-radius:18px}.agent-prompt-icon{width:42px;height:42px;border-radius:12px}.agent-prompt-form input{font-size:13px}.agent-prompt-form span{display:none}.agent-prompt-button{grid-column:1/-1;width:100%;min-height:42px}.command-metrics{gap:11px}.command-grid{margin-top:12px}.page-heading h1{font-size:27px}.command-heading{align-items:flex-start}.recent-activity{margin-top:12px}}
 .wallet-connect,.wallet-status,.wallet-disconnect{font:inherit;cursor:pointer}.wallet-connect{height:40px;border:1px solid #c8d8fb;border-radius:12px;background:#edf3ff;color:#214dbd;padding:0 13px;display:flex;align-items:center;gap:8px;font-size:11px;font-weight:800}.wallet-connect svg{height:17px;width:17px;fill:none;stroke:currentColor;stroke-width:1.8}.wallet-connect:hover,.wallet-connect:focus-visible{background:#e1ebff;outline:3px solid #dbe7ff}.wallet-control{display:flex;align-items:stretch}.wallet-status{min-height:42px;border:1px solid #cfe5df;border-radius:12px 0 0 12px;background:#f4fffc;color:#075f56;padding:5px 11px;display:flex;align-items:center;gap:8px;max-width:230px}.wallet-status>i{width:8px;height:8px;border-radius:50%;background:#0a9f8d;box-shadow:0 0 0 4px rgba(10,159,141,.12);flex:0 0 auto}.wallet-status span{min-width:0;text-align:left}.wallet-status strong,.wallet-status small{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.wallet-status strong{font-size:10px}.wallet-status small{font-size:9px;color:#4f746f}.wallet-status.checking{border-radius:12px;background:#f7f9fc;color:#4b5871}.wallet-status.checking .loader{width:16px;height:16px;border-width:2px}.wallet-status.error{border-radius:12px;border-color:#efbdc5;background:#fff7f8;color:#9c2942}.wallet-status.error svg{height:17px;width:17px}.wallet-disconnect{border:1px solid #cfe5df;border-left:0;border-radius:0 12px 12px 0;background:#fff;color:#52627b;padding:0 9px;font-size:9px;font-weight:750}.wallet-disconnect:hover{color:#a72f47;background:#fff7f8}.wallet-banner{align-items:center}.wallet-banner>div{flex:1}.wallet-banner .button{flex:0 0 auto}.wallet-banner.attention{border-color:#eed59f;background:#fffbf1;color:#75521b}.wallet-banner.attention strong{color:#684512}.wallet-account-value{font-family:var(--mono);font-size:15px}.topbar xrpl-wallet-connector{flex:0 0 auto}@media(max-width:950px){.wallet-control,.wallet-status,.wallet-connect{max-width:190px}.wallet-status small{display:none}.wallet-banner{align-items:flex-start;flex-wrap:wrap}.wallet-banner .button{margin-left:29px}}@media(max-width:780px){.wallet-control,.wallet-connect,.wallet-status{display:none}.topbar xrpl-wallet-connector{margin-left:auto}}
+
+
+/* Responsive layout and voice capture hardening */
+html, body, #app { max-width: 100%; overflow-x: clip; }
+.shell, .workspace, .page, .grid, .card, .agent-prompt, .agent-prompt-form, .topbar { min-width: 0; }
+.nav-scrim { display: none; }
+.page-heading, .command-heading, .card-heading { min-width: 0; }
+.page-heading > div, .card-heading > div { min-width: 0; }
+.page-heading h1, .card-heading h2 { overflow-wrap: anywhere; }
+.table-wrap, .reference-preview { max-width: 100%; overflow-x: auto; }
+.row, .control, .voice-panel { min-width: 0; }
+.code, .row b, .row span, .wallet-account-value { overflow-wrap: anywhere; }
+.voice-live-transcript { margin-top: 8px !important; padding: 10px 12px; min-height: 37px; max-height: 155px; overflow-y: auto; border-radius: 10px; background: #e9f9f6; color: #183a55 !important; font-size: 12px !important; line-height: 1.55; overflow-wrap: anywhere; white-space: pre-wrap; }
+.voice-panel.listening > div { flex: 1 1 220px; min-width: 0; }
+.topbar { gap: 10px; }
+.topbar .crumb { min-width: 0; flex-shrink: 1; }
+.topbar .crumb strong { overflow-wrap: anywhere; }
+.topbar xrpl-wallet-connector { min-width: 0; max-width: 100%; flex-shrink: 1; }
+@media (max-width: 1280px) {
+  .topbar { padding-left: 20px; padding-right: 20px; }
+  .topbar .crumb span:first-child { display: none; }
+  .topbar .env-badge { display: none; }
+  .topbar .icon-button[aria-label="Notifications"] { display: none; }
+  .topbar .wallet-status { max-width: 150px; }
+  .page { padding-left: 22px; padding-right: 22px; }
+}
+@media (max-width: 1100px) {
+  .shell { display: block; grid-template-columns: minmax(0, 1fr); }
+  .workspace { width: 100%; min-width: 0; }
+  .sidebar {
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 55;
+    width: min(320px, 86vw);
+    max-width: 86vw;
+    height: 100dvh;
+    overflow-y: auto;
+    transform: translateX(-105%);
+    transition: transform .2s ease;
+    box-shadow: 12px 0 35px rgba(7, 27, 63, .16);
+  }
+  .shell.nav-open .sidebar { transform: translateX(0); }
+  .shell.nav-open .nav-scrim {
+    display: block; position: fixed; inset: 0; z-index: 54;
+    border: 0; width: 100%; height: 100dvh;
+    background: rgba(8, 22, 49, .58); cursor: pointer;
+  }
+  .mobile-nav {
+    display: flex; position: fixed; left: 0; right: 0; bottom: 0;
+    height: 68px; z-index: 42; justify-content: space-around; align-items: center;
+    padding: 5px max(8px, env(safe-area-inset-right)) max(6px, env(safe-area-inset-bottom));
+    background: rgba(7, 27, 63, .98); box-shadow: 0 -6px 25px rgba(8, 22, 49, .11);
+  }
+  .mobile-nav .nav-button {
+    display: grid; place-items: center; gap: 2px; width: auto; flex: 1 1 0;
+    min-width: 0; max-width: 130px; padding: 5px 3px;
+    color: #b9c8e9; font-size: 10px; text-align: center;
+  }
+  .mobile-nav .nav-icon { height: 19px; width: 19px; }
+  .mobile-nav .nav-button.active { background: transparent; box-shadow: none; color: #79dcca; }
+  .mobile-nav .nav-button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+  .topbar { min-height: 70px; height: auto; padding: 10px 19px; }
+  .topbar .wallet-control, .topbar > .wallet-status { display: none; }
+  .topbar .crumb { flex: 0 1 auto; }
+  .topbar .crumb strong { font-size: 16px; }
+  .topbar .topbar-spacer { min-width: 0; }
+  .page { padding: 24px 20px 94px; max-width: none; }
+  .grid.two, .detail-grid, .command-grid { grid-template-columns: minmax(0, 1fr) !important; }
+  .grid.four { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .page-heading, .command-heading { gap: 12px; flex-wrap: wrap; }
+  .page-heading .button { flex-shrink: 0; }
+  .agent-prompt { grid-template-columns: 44px minmax(0, 1fr); }
+  .agent-prompt-form { grid-column: 2; }
+  .prompt-actions { grid-column: 2; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  .agent-prompt-button, .prompt-actions .agent-prompt-button { grid-column: auto; width: auto; margin: 0; }
+}
+@media (max-width: 680px) {
+  .topbar { flex-wrap: wrap; gap: 9px; padding: 10px 14px; }
+  .topbar .crumb { flex: 1 1 110px; }
+  .topbar xrpl-wallet-connector { flex: 0 1 auto; max-width: min(100%, 210px); }
+  .topbar .icon-button[aria-label="Refresh workspace"] { display: none; }
+  .page { padding: 20px 14px 95px; }
+  .grid.four { gap: 10px; }
+  .agent-prompt { padding: 15px; gap: 12px; }
+  .agent-prompt-icon { height: 42px; width: 42px; }
+  .agent-prompt-form { grid-column: 2; }
+  .prompt-actions { grid-column: 1 / -1; display: flex; }
+  .prompt-actions .agent-prompt-button { flex: 1 1 auto; }
+  .card-heading { flex-wrap: wrap; }
+  .voice-panel { flex-wrap: wrap; }
+  .voice-panel .button { margin-left: auto; }
+  .voice-actions { width: 100%; display: flex; flex-wrap: wrap; }
+  .voice-actions .button { flex: 1 1 160px; }
+  .page-heading .button { margin-top: 8px; }
+}
+@media (max-width: 440px) {
+  .grid.four { grid-template-columns: minmax(0, 1fr); }
+  .topbar .crumb { width: 100%; }
+  .topbar xrpl-wallet-connector { width: 100%; max-width: 100%; }
+  .agent-prompt { grid-template-columns: minmax(0, 1fr); }
+  .agent-prompt-icon { display: none; }
+  .agent-prompt-form, .prompt-actions { grid-column: 1; }
+  .mobile-nav .nav-button { font-size: 9px; }
+  .page-heading h1 { font-size: 25px; }
+}
