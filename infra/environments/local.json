@@ -1,0 +1,24 @@
+{
+  "$schema": "../schemas/environment.schema.json",
+  "environment": "local",
+  "environmentId": "alloc-x-local",
+  "mode": "development",
+  "identity": {
+    "issuer": "alloc-x-local-identity",
+    "apiAudience": "alloc-x-local-api",
+    "serviceNamespace": "alloc-x-local-services"
+  },
+  "ledger": {
+    "network": "standalone",
+    "rpcUrlEnv": "ALLOC_X_LOCAL_XRPL_RPC_URL",
+    "treasuryAccountEnv": "ALLOC_X_LOCAL_XRPL_TREASURY_ACCOUNT"
+  },
+  "signing": {
+    "executorKeyRefEnv": "ALLOC_X_LOCAL_EXECUTOR_KEY_REF",
+    "policyKeyRefEnv": "ALLOC_X_LOCAL_POLICY_KEY_REF"
+  },
+  "storage": {
+    "databaseUrlEnv": "ALLOC_X_LOCAL_DATABASE_URL",
+    "objectStoreUrlEnv": "ALLOC_X_LOCAL_OBJECT_STORE_URL"
+  }
+}

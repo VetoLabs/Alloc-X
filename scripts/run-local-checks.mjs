@@ -1,0 +1,27 @@
+import { spawnSync } from "node:child_process";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const checks = [
+  ["workspace", ["scripts/quality/validate-workspace.mjs"]],
+  ["secrets", ["scripts/security/scan-secrets.mjs"]],
+  ["format", ["scripts/quality/check-format.mjs"]],
+  ["lint", ["scripts/quality/lint.mjs"]],
+  ["unit tests", ["--test", "--test-isolation=none", "packages/config/test/config.test.ts"]],
+  [
+    "integration tests",
+    ["--test", "--test-isolation=none", "tests/integration/environment-boundaries.test.ts"],
+  ],
+];
+
+for (const [name, arguments_] of checks) {
+  console.log(`\n[Alloc-X check] ${name}`);
+  const result = spawnSync(process.execPath, arguments_, {
+    cwd: root,
+    stdio: "inherit",
+  });
+  if (result.status !== 0) process.exit(result.status ?? 1);
+}
+
+console.log("\nAll local Alloc-X checks passed.");

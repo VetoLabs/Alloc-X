@@ -1,0 +1,24 @@
+{
+  "$schema": "../schemas/environment.schema.json",
+  "environment": "production",
+  "environmentId": "alloc-x-production",
+  "mode": "production",
+  "identity": {
+    "issuer": "alloc-x-production-identity",
+    "apiAudience": "alloc-x-production-api",
+    "serviceNamespace": "alloc-x-production-services"
+  },
+  "ledger": {
+    "network": "mainnet",
+    "rpcUrlEnv": "ALLOC_X_PRODUCTION_XRPL_RPC_URL",
+    "treasuryAccountEnv": "ALLOC_X_PRODUCTION_XRPL_TREASURY_ACCOUNT"
+  },
+  "signing": {
+    "executorKeyRefEnv": "ALLOC_X_PRODUCTION_EXECUTOR_KEY_REF",
+    "policyKeyRefEnv": "ALLOC_X_PRODUCTION_POLICY_KEY_REF"
+  },
+  "storage": {
+    "databaseUrlEnv": "ALLOC_X_PRODUCTION_DATABASE_URL",
+    "objectStoreUrlEnv": "ALLOC_X_PRODUCTION_OBJECT_STORE_URL"
+  }
+}
