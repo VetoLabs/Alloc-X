@@ -1,0 +1,7 @@
+{
+  "name": "@alloc-x/public-sector-policy-pack",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Public-sector organization policy-pack controls for Alloc-X."
+}
