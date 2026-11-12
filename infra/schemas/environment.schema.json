@@ -1,0 +1,139 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://alloc-x.local/schemas/environment.schema.json",
+  "title": "Alloc-X Environment Configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "environment",
+    "environmentId",
+    "mode",
+    "identity",
+    "ledger",
+    "signing",
+    "storage"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "environment": {
+      "enum": [
+        "local",
+        "test",
+        "staging",
+        "production"
+      ]
+    },
+    "environmentId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "mode": {
+      "enum": [
+        "development",
+        "test",
+        "staging",
+        "production"
+      ]
+    },
+    "identity": {
+      "$ref": "#/$defs/identity"
+    },
+    "ledger": {
+      "$ref": "#/$defs/ledger"
+    },
+    "signing": {
+      "$ref": "#/$defs/signing"
+    },
+    "storage": {
+      "$ref": "#/$defs/storage"
+    }
+  },
+  "$defs": {
+    "environmentReference": {
+      "type": "string",
+      "pattern": "^ALLOC_X_[A-Z0-9_]+$"
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "issuer",
+        "apiAudience",
+        "serviceNamespace"
+      ],
+      "properties": {
+        "issuer": {
+          "type": "string",
+          "minLength": 1
+        },
+        "apiAudience": {
+          "type": "string",
+          "minLength": 1
+        },
+        "serviceNamespace": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "ledger": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "network",
+        "rpcUrlEnv",
+        "treasuryAccountEnv"
+      ],
+      "properties": {
+        "network": {
+          "enum": [
+            "standalone",
+            "devnet",
+            "testnet",
+            "mainnet"
+          ]
+        },
+        "rpcUrlEnv": {
+          "$ref": "#/$defs/environmentReference"
+        },
+        "treasuryAccountEnv": {
+          "$ref": "#/$defs/environmentReference"
+        }
+      }
+    },
+    "signing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "executorKeyRefEnv",
+        "policyKeyRefEnv"
+      ],
+      "properties": {
+        "executorKeyRefEnv": {
+          "$ref": "#/$defs/environmentReference"
+        },
+        "policyKeyRefEnv": {
+          "$ref": "#/$defs/environmentReference"
+        }
+      }
+    },
+    "storage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "databaseUrlEnv",
+        "objectStoreUrlEnv"
+      ],
+      "properties": {
+        "databaseUrlEnv": {
+          "$ref": "#/$defs/environmentReference"
+        },
+        "objectStoreUrlEnv": {
+          "$ref": "#/$defs/environmentReference"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "name": "alloc-x",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Policy-bound treasury allocation and payment infrastructure.",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "services/*"
+  ],
+  "scripts": {
+    "check": "node scripts/run-local-checks.mjs",
+    "workspace:validate": "node scripts/quality/validate-workspace.mjs",
+    "security:scan": "node scripts/security/scan-secrets.mjs",
+    "format": "node scripts/quality/format-json.mjs",
+    "format:check": "node scripts/quality/check-format.mjs",
+    "lint": "node scripts/quality/lint.mjs",
+    "test": "node --test --test-isolation=none packages/config/test/config.test.ts packages/contracts/test/contracts.test.ts packages/contracts/test/domain.test.ts tests/integration/environment-boundaries.test.ts",
+    "test:unit": "node --test --test-isolation=none packages/config/test/config.test.ts packages/contracts/test/contracts.test.ts packages/contracts/test/domain.test.ts",
+    "test:integration": "node --test --test-isolation=none tests/integration/environment-boundaries.test.ts",
+    "test:contracts": "node --test --test-isolation=none packages/contracts/test/contracts.test.ts packages/contracts/test/domain.test.ts"
+  }
+}

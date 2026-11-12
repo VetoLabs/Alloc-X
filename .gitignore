@@ -147,3 +147,13 @@ vite.config.ts.timestamp-*
 
 # Turbo Repo
 .turbo
+
+# Sensitive key material
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Operating system metadata
+.DS_Store
+Thumbs.db

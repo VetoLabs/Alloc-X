@@ -1,0 +1,24 @@
+{
+  "$schema": "../schemas/environment.schema.json",
+  "environment": "test",
+  "environmentId": "alloc-x-test",
+  "mode": "test",
+  "identity": {
+    "issuer": "alloc-x-test-identity",
+    "apiAudience": "alloc-x-test-api",
+    "serviceNamespace": "alloc-x-test-services"
+  },
+  "ledger": {
+    "network": "devnet",
+    "rpcUrlEnv": "ALLOC_X_TEST_XRPL_RPC_URL",
+    "treasuryAccountEnv": "ALLOC_X_TEST_XRPL_TREASURY_ACCOUNT"
+  },
+  "signing": {
+    "executorKeyRefEnv": "ALLOC_X_TEST_EXECUTOR_KEY_REF",
+    "policyKeyRefEnv": "ALLOC_X_TEST_POLICY_KEY_REF"
+  },
+  "storage": {
+    "databaseUrlEnv": "ALLOC_X_TEST_DATABASE_URL",
+    "objectStoreUrlEnv": "ALLOC_X_TEST_OBJECT_STORE_URL"
+  }
+}

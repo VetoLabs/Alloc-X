@@ -1,0 +1,24 @@
+{
+  "$schema": "../schemas/environment.schema.json",
+  "environment": "staging",
+  "environmentId": "alloc-x-staging",
+  "mode": "staging",
+  "identity": {
+    "issuer": "alloc-x-staging-identity",
+    "apiAudience": "alloc-x-staging-api",
+    "serviceNamespace": "alloc-x-staging-services"
+  },
+  "ledger": {
+    "network": "testnet",
+    "rpcUrlEnv": "ALLOC_X_STAGING_XRPL_RPC_URL",
+    "treasuryAccountEnv": "ALLOC_X_STAGING_XRPL_TREASURY_ACCOUNT"
+  },
+  "signing": {
+    "executorKeyRefEnv": "ALLOC_X_STAGING_EXECUTOR_KEY_REF",
+    "policyKeyRefEnv": "ALLOC_X_STAGING_POLICY_KEY_REF"
+  },
+  "storage": {
+    "databaseUrlEnv": "ALLOC_X_STAGING_DATABASE_URL",
+    "objectStoreUrlEnv": "ALLOC_X_STAGING_OBJECT_STORE_URL"
+  }
+}
