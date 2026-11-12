@@ -198,7 +198,7 @@ function allocationCard(allocation) { const used = Math.max(0, Number(allocation
 
 function voicePanel() {
   if (state.voiceState === 'IDLE' && !state.voiceInstruction) return '';
-  if (state.voiceState === 'LISTENING') return `<section class="voice-panel listening" aria-live="polite"><span class="voice-wave" aria-hidden="true"></span><div><strong>Listening for your instruction…</strong><p>Say: “Alloc-X, pay 1350 XRP to MedTech Supplies for operations-supplies.”</p></div>${button('Stop recording', 'voice-toggle', 'secondary')}</section>`;
+  if (state.voiceState === 'LISTENING') return `<section class="voice-panel listening" aria-live="polite"><span class="voice-wave" aria-hidden="true"></span><div><strong>Listening for your instruction…</strong><p>Speak naturally. Recording continues across pauses until you press Stop.</p><p class="voice-live-transcript" id="voice-live-transcript" aria-live="polite">Listening…</p></div>${button}('Stop recording', 'voice-toggle', 'secondary')}</section>`;
   if (state.voiceState === 'PROCESSING') return `<section class="voice-panel" aria-live="polite"><span class="loader"></span><div><strong>Preparing your voice instruction</strong><p>Alloc-X is creating a transcript for your review. Nothing has been sent for payment.</p></div></section>`;
   if (state.voiceState === 'ERROR') return `<section class="voice-panel error" role="alert"><span>${svg('alert')}</span><div><strong>Voice input needs attention</strong><p>${esc(state.voiceTranscript || 'Microphone access or speech recognition is unavailable. You can still type your instruction.')}</p></div>${button('Try again', 'voice-toggle', 'secondary')}</section>`;
   const instruction = state.voiceInstruction;
@@ -277,6 +277,7 @@ function updateReferencePreview() { const form = document.querySelector('#paymen
 function bind() {
   const connector = document.querySelector('#wallet-connector');
   if (connector && walletManager) connector.setWalletManager(walletManager);
+  if (voiceCapture && state.voiceState === 'LISTENING') updateVoicePreview(voiceCapture);
   document.querySelectorAll('[data-route]').forEach((element) => element.addEventListener('click', (event) => { event.preventDefault(); state.mobileMenuOpen = false; state.route = element.dataset.route; state.activePaymentId = null; state.activeBeneficiaryId = null; render(); }));
   document.querySelectorAll('[data-action]').forEach((element) => element.addEventListener('click', onAction));
   const form = document.querySelector('#payment-form');
@@ -296,17 +297,154 @@ async function submitPayment(event) { event.preventDefault(); if (state.busy) re
 async function submitAgentInstruction(event) { event.preventDefault(); if (state.busy) return; const form = event.currentTarget; state.busy = true; render(); try { const result = await api('/api/agent/sessions/agent_console_operator/messages', { method: 'POST', body: JSON.stringify({ message: form.message.value }) }); state.agentSession = result.session; toast('Allocation agent updated', result.message); } catch (error) { toast('Agent instruction could not be processed', error.message, true); } finally { state.busy = false; render(); } }
 
 let activeRecognition = null;
-function toggleVoiceCapture() {
-  if (state.voiceState === 'LISTENING' && activeRecognition) { activeRecognition.stop(); return; }
-  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!Recognition) { state.voiceState = 'ERROR'; state.voiceTranscript = 'Voice input is not available in this browser. Use a current Chromium browser or type your instruction.'; render(); return; }
-  const recognition = new Recognition(); activeRecognition = recognition; recognition.lang = 'en-NG'; recognition.interimResults = true; recognition.continuous = false; let finalTranscript = ''; let confidence;
-  recognition.onstart = () => { state.voiceInstruction = null; state.voiceState = 'LISTENING'; state.voiceTranscript = ''; render(); };
-  recognition.onresult = (event) => { for (let index = event.resultIndex; index < event.results.length; index += 1) { const result = event.results[index]; if (result.isFinal) { finalTranscript += result[0].transcript; confidence = result[0].confidence; } } };
-  recognition.onerror = (event) => { activeRecognition = null; state.voiceState = 'ERROR'; state.voiceTranscript = event.error === 'not-allowed' ? 'Microphone permission was not granted. Allow microphone access, then try again.' : `Voice recognition could not complete (${event.error}). You can type your instruction instead.`; render(); };
-  recognition.onend = async () => { if (state.voiceState !== 'LISTENING') return; activeRecognition = null; if (!finalTranscript.trim()) { state.voiceState = 'ERROR'; state.voiceTranscript = 'No speech was captured. Please try again and include amount, asset, beneficiary, and purpose.'; render(); return; } state.voiceState = 'PROCESSING'; state.voiceTranscript = finalTranscript.trim(); state.voiceConfidence = confidence; render(); try { const result = await api('/api/voice/instructions', { method: 'POST', body: JSON.stringify({ sessionId: 'agent_console_operator', transcript: state.voiceTranscript, recognition: { engine: 'browser-native', locale: 'en-NG', ...(typeof confidence === 'number' ? { confidence } : {}) } }) }); state.voiceInstruction = result.instruction; state.voiceState = 'REVIEW'; render(); toast('Transcript ready for review', 'Confirm the exact words before Alloc-X can interpret them.'); } catch (error) { state.voiceState = 'ERROR'; state.voiceTranscript = error.message; render(); } };
-  try { recognition.start(); } catch { state.voiceState = 'ERROR'; state.voiceTranscript = 'Voice capture could not start. Close any other recording session and try again.'; render(); }
+let voiceCapture = null;
+
+// Browsers can end a speech-recognition session after a brief pause.
+// Continue capturing segments until the operator explicitly presses Stop.
+function capturedVoice(session, current = '', interim = '') {
+  return [...session.parts, current, interim].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
 }
+
+function updateVoicePreview(session, current = '', interim = '') {
+  const preview = document.querySelector('#voice-live-transcript');
+  if (preview) preview.textContent = capturedVoice(session, current, interim) || 'Listening… speak naturally and pause whenever you need.';
+}
+
+function toggleVoiceCapture() {
+  if (voiceCapture && state.voiceState === 'LISTENING') {
+    const session = voiceCapture;
+    session.stopRequested = true;
+    if (session.restartTimer) clearTimeout(session.restartTimer);
+    if (activeRecognition) {
+      try { activeRecognition.stop(); } catch { finishVoiceCapture(session); }
+    } else {
+      finishVoiceCapture(session);
+    }
+    return;
+  }
+  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!Recognition) {
+    state.voiceState = 'ERROR';
+    state.voiceTranscript = 'Speech recognition is unavailable in this browser. Try Chrome with microphone access, or type your instruction.';
+    render();
+    return;
+  }
+  if (voiceCapture || state.voiceState === 'PROCESSING') return;
+  const session = { Recognition, parts: [], stopRequested: false, finalized: false, restartTimer: null, error: null, confidence: undefined };
+  voiceCapture = session;
+  state.voiceInstruction = null;
+  state.voiceTranscript = '';
+  state.voiceState = 'LISTENING';
+  render();
+  startVoiceSegment(session);
+}
+
+function startVoiceSegment(session) {
+  if (voiceCapture !== session || session.stopRequested || session.finalized) return;
+  const recognition = new session.Recognition();
+  activeRecognition = recognition;
+  recognition.lang = 'en-NG';
+  recognition.interimResults = true;
+  recognition.continuous = true;
+  let segmentText = '';
+  let segmentInterim = '';
+
+  recognition.onresult = (event) => {
+    if (voiceCapture !== session) return;
+    const finalized = [];
+    const interim = [];
+    for (const result of event.results) {
+      const text = result[0]?.transcript?.trim();
+      if (!text) continue;
+      (result.isFinal ? finalized : interim).push(text);
+      if (result.isFinal && Number.isFinite(result[0]?.confidence)) session.confidence = result[0].confidence;
+    }
+    // Rebuild from this recognition session's results to avoid duplicated finals.
+    segmentText = finalized.join(' ');
+    segmentInterim = interim.join(' ');
+    updateVoicePreview(session, segmentText, segmentInterim);
+  };
+  recognition.onerror = (event) => {
+    if (voiceCapture !== session || session.stopRequested) return;
+    if (event.error === 'no-speech' || event.error === 'aborted') return;
+    session.error = event.error === 'not-allowed' || event.error === 'service-not-allowed'
+      ? 'Microphone or speech recognition permission was denied. Check your browser permissions.'
+      : event.error === 'audio-capture' ? 'The microphone is unavailable. Check your audio input.' : 'Speech recognition stopped (' + event.error + '). Your transcript has not been submitted.';
+    session.stopRequested = true;
+  };
+  recognition.onend = () => {
+    if (voiceCapture !== session) return;
+    if (segmentText.trim()) session.parts.push(segmentText.trim());
+    activeRecognition = null;
+    updateVoicePreview(session);
+    if (session.stopRequested || session.error) {
+      finishVoiceCapture(session);
+      return;
+    }
+    // Chrome may end a recognition instance during silence; start a fresh one.
+    session.restartTimer = setTimeout(() => startVoiceSegment(session), 350);
+  };
+  try { recognition.start(); }
+  catch (error) {
+    session.error = 'Speech recognition could not start. Check the microphone permission and try again.';
+    session.stopRequested = true;
+    finishVoiceCapture(session);
+  }
+}
+
+async function finishVoiceCapture(session) {
+  if (voiceCapture !== session || session.finalized) return;
+  session.finalized = true;
+  if (session.restartTimer) clearTimeout(session.restartTimer);
+  voiceCapture = null;
+  activeRecognition = null;
+  const transcript = capturedVoice(session);
+  if (session.error) {
+    state.voiceState = 'ERROR';
+    state.voiceTranscript = session.error + (transcript ? ' Captured text: ' + transcript : '');
+    render();
+    return;
+  }
+  if (!transcript) {
+    state.voiceState = 'ERROR';
+    state.voiceTranscript = 'No speech was captured. Speak your instruction and press Stop when you have finished.';
+    render();
+    return;
+  }
+  if (transcript.length > 2000) {
+    state.voiceState = 'ERROR';
+    state.voiceTranscript = 'Your recording exceeded the 2,000-character transcript limit. Please record a shorter instruction.';
+    render();
+    return;
+  }
+  state.voiceState = 'PROCESSING';
+  state.voiceTranscript = transcript;
+  state.voiceConfidence = session.confidence;
+  render();
+  try {
+    const result = await api('/api/voice/instructions', {
+      method: 'POST',
+      body: JSON.stringify({
+        sessionId: 'agent_console_operator',
+        transcript,
+        recognition: {
+          engine: 'browser-native',
+          locale: 'en-NG',
+          ...(typeof session.confidence === 'number' ? { confidence: session.confidence } : {}),
+        },
+      }),
+    });
+    state.voiceInstruction = result.instruction;
+    state.voiceState = 'REVIEW';
+    render();
+    toast('Transcript ready for review', 'Review the complete recording before confirming a financial instruction.');
+  } catch (error) {
+    state.voiceState = 'ERROR';
+    state.voiceTranscript = 'Transcript could not be saved: ' + error.message + '. Captured text: ' + transcript;
+    render();
+  }
+}
+
 async function confirmVoiceInstruction() { const instruction = state.voiceInstruction; if (!instruction || state.busy) return; state.busy = true; render(); try { const result = await api(`/api/voice/instructions/${encodeURIComponent(instruction.voiceInstructionId)}/confirm`, { method: 'POST', body: JSON.stringify({ transcript: instruction.transcript }) }); state.agentSession = result.session; state.voiceInstruction = null; state.voiceTranscript = ''; state.voiceState = 'IDLE'; toast('Voice instruction confirmed', result.message); } catch (error) { toast('Voice confirmation could not continue', error.message, true); } finally { state.busy = false; render(); } }
 
 async function recoverDecision(paymentId) { try { const result = await api(`/api/payments/${encodeURIComponent(paymentId)}/recover`, { method: 'POST', body: '{}' }); toast('Decision recovered', `The durable record ${compact(result.recovered.recordHash)} was verified for this intent.`); } catch (error) { toast('Recovery unavailable', error.message, true); } }
