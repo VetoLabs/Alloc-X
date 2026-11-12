@@ -3,7 +3,6 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Client as XrplClient, dropsToXrp, isValidClassicAddress } from "xrpl";
 
 import { InMemoryTreasuryAccounting } from "../../packages/accounting/src/index.ts";
 import { InMemoryAuditChain } from "../../packages/audit-chain/src/index.ts";
@@ -30,7 +29,7 @@ import { FileMainnetActivationStore, MainnetActivationService } from "../../serv
 const here = dirname(fileURLToPath(import.meta.url));
 const publicDirectory = join(here, "public");
 const dependencyDirectory = resolve(here, "..", "..", "node_modules");
-const defaultTestnetEndpoint = "wss://s.altnet.rippletest.net:51233/";
+const testnetJsonRpcEndpoint = "https://s.altnet.rippletest.net:51234/";
 const organizationId = "org_meridian";
 const policyVersion = "policy_meridian_2026";
 const evidenceHash = `sha256:${"a".repeat(64)}`;
@@ -156,7 +155,7 @@ export async function createConsoleServer(options: ConsoleServerOptions = {}): P
       const url = new URL(request.url ?? "/", "http://127.0.0.1");
       if (request.method === "GET" && /^\/api\/xrpl\/testnet\/accounts\/[^/]+$/.test(url.pathname)) {
         const address = decodeURIComponent(url.pathname.split("/")[5] ?? "");
-        if (!isValidClassicAddress(address)) return json(response, 400, { error: "A valid XRPL classic address is required." });
+        if (!/^r[1-9A-HJ-NP-Za-km-z]{24,34}$/.test(address)) return json(response, 400, { error: "A valid XRPL classic address is required." });
         const snapshot = await (options.testnetAccountReader ?? readTestnetAccount)(address);
         if (snapshot.account !== address) throw new Error("XRPL account response did not match the requested wallet.");
         return json(response, 200, { ...snapshot, network: "testnet", validated: true });
@@ -581,17 +580,34 @@ async function serveAsset(pathname: string, response: ServerResponse): Promise<v
 }
 
 async function readTestnetAccount(address: string): Promise<TestnetAccountSnapshot> {
-  const client = new XrplClient(defaultTestnetEndpoint);
-  try {
-    await client.connect();
-    const result = await client.request({ command: "account_info", account: address, ledger_index: "validated" });
-    const balanceDrops = result.result.account_data.Balance;
-    const ledgerIndex = result.result.ledger_index;
-    if (typeof balanceDrops !== "string" || !/^\d+$/.test(balanceDrops) || !Number.isSafeInteger(ledgerIndex)) throw new Error("XRPL returned an invalid account snapshot.");
-    return Object.freeze({ account: address, balanceDrops, balanceXrp: String(dropsToXrp(balanceDrops)), ledgerIndex, observedAt: now() });
-  } finally {
-    if (client.isConnected()) await client.disconnect();
+  // A read-only public JSON-RPC call: no SDK imports or signing authority are needed for a balance lookup.
+  const response = await fetch(testnetJsonRpcEndpoint, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ method: "account_info", params: [{ account: address, ledger_index: "validated" }] }),
+    signal: AbortSignal.timeout(9_000),
+  });
+  if (!response.ok) throw new Error("XRPL Testnet account lookup failed.");
+  const payload = await response.json() as {
+    result?: { status?: string; account?: string; account_data?: { Account?: string; Balance?: string }; ledger_index?: number };
+  };
+  const result = payload.result;
+  const balanceDrops = result?.account_data?.Balance;
+  const ledgerIndex = result?.ledger_index;
+  if (result?.status !== "success" || result.account_data?.Account !== address ||
+      typeof balanceDrops !== "string" || !/^\d+$/.test(balanceDrops) ||
+      !Number.isSafeInteger(ledgerIndex)) {
+    throw new Error("XRPL did not return a valid, validated Testnet account snapshot.");
   }
+  const whole = balanceDrops.length > 6 ? balanceDrops.slice(0, -6) : "0";
+  const fraction = balanceDrops.slice(-6).padStart(6, "0").replace(/0+$/, "");
+  return Object.freeze({
+    account: address,
+    balanceDrops,
+    balanceXrp: fraction ? whole + "." + fraction : whole,
+    ledgerIndex: ledgerIndex as number,
+    observedAt: now(),
+  });
 }
 
 function json(response: ServerResponse, status: number, body: unknown): void { response.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff" }); response.end(JSON.stringify(body)); }
