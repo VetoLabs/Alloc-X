@@ -1,0 +1,7 @@
+{
+  "name": "@alloc-x/offline-device-trust",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Encrypted device-bound offline storage, authorization, revocation, journal integrity, and cryptographic wipe for Alloc-X."
+}

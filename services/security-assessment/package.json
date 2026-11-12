@@ -1,0 +1,7 @@
+{
+  "name": "@alloc-x/security-assessment",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Independent security assessment, remediation, retest, and production gate for Alloc-X."
+}
