@@ -1,7 +1,7 @@
 import { createPrivateKey, createPublicKey, generateKeyPairSync } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client as XrplClient, dropsToXrp, isValidClassicAddress } from "xrpl";
 
@@ -572,7 +572,7 @@ async function serveAsset(pathname: string, response: ServerResponse): Promise<v
   }
   const requested = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
   const absolute = resolve(publicDirectory, requested);
-  if (!absolute.startsWith(`${resolve(publicDirectory)}\\`) && absolute !== resolve(publicDirectory, "index.html")) return json(response, 403, { error: "Asset path is invalid." });
+  if (!absolute.startsWith(`${resolve(publicDirectory)}${sep}`) && absolute !== resolve(publicDirectory, "index.html")) return json(response, 403, { error: "Asset path is invalid." });
   try {
     const content = await readFile(absolute);
     const type = absolute.endsWith(".css") ? "text/css; charset=utf-8" : absolute.endsWith(".js") ? "text/javascript; charset=utf-8" : absolute.endsWith(".svg") ? "image/svg+xml; charset=utf-8" : absolute.endsWith(".jpg") || absolute.endsWith(".jpeg") ? "image/jpeg" : "text/html; charset=utf-8";
