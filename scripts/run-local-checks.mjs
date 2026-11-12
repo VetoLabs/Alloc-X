@@ -22,6 +22,8 @@ const checks = [
       "packages/audit-chain/test/audit-chain.test.ts",
       "packages/accounting/test/accounting.test.ts",
       "packages/payment-intents/test/payment-intents.test.ts",
+      "packages/beneficiaries/test/beneficiaries.test.ts",
+      "packages/beneficiaries/test/beneficiary-policy.integration.test.ts",
       "services/approval-layer/test/approval-layer.test.ts",
       "services/approval-layer/test/durable-decision-journal.test.ts",
     ],
