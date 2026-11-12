@@ -1,0 +1,7 @@
+{
+  "name": "@alloc-x/operational-monitoring",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Privacy-safe operational telemetry and actionable alerting for Alloc-X."
+}

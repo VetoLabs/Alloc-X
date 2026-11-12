@@ -1,0 +1,7 @@
+{
+  "name": "@alloc-x/agent-evaluations",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Release-blocking evaluation contracts for the Alloc-X allocation agent."
+}
