@@ -19,8 +19,9 @@
     "format": "node scripts/quality/format-json.mjs",
     "format:check": "node scripts/quality/check-format.mjs",
     "lint": "node scripts/quality/lint.mjs",
-    "test": "node --test --test-isolation=none packages/config/test/config.test.ts tests/integration/environment-boundaries.test.ts",
-    "test:unit": "node --test --test-isolation=none packages/config/test/config.test.ts",
-    "test:integration": "node --test --test-isolation=none tests/integration/environment-boundaries.test.ts"
+    "test": "node --test --test-isolation=none packages/config/test/config.test.ts packages/contracts/test/contracts.test.ts packages/contracts/test/domain.test.ts tests/integration/environment-boundaries.test.ts",
+    "test:unit": "node --test --test-isolation=none packages/config/test/config.test.ts packages/contracts/test/contracts.test.ts packages/contracts/test/domain.test.ts",
+    "test:integration": "node --test --test-isolation=none tests/integration/environment-boundaries.test.ts",
+    "test:contracts": "node --test --test-isolation=none packages/contracts/test/contracts.test.ts packages/contracts/test/domain.test.ts"
   }
 }

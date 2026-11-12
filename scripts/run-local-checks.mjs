@@ -8,7 +8,16 @@ const checks = [
   ["secrets", ["scripts/security/scan-secrets.mjs"]],
   ["format", ["scripts/quality/check-format.mjs"]],
   ["lint", ["scripts/quality/lint.mjs"]],
-  ["unit tests", ["--test", "--test-isolation=none", "packages/config/test/config.test.ts"]],
+  [
+    "unit tests",
+    [
+      "--test",
+      "--test-isolation=none",
+      "packages/config/test/config.test.ts",
+      "packages/contracts/test/contracts.test.ts",
+      "packages/contracts/test/domain.test.ts",
+    ],
+  ],
   [
     "integration tests",
     ["--test", "--test-isolation=none", "tests/integration/environment-boundaries.test.ts"],
