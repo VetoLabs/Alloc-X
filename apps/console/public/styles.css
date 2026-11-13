@@ -271,3 +271,88 @@ html, body, #app { max-width: 100%; overflow-x: clip; }
     flex: 1;
   }
 }
+
+
+/* Allocation signer CTA — priority action above compact utility buttons. */
+.registry-card .registry-actions{
+  display:grid;
+  grid-template-columns:minmax(0,1fr);
+  align-content:end;
+  gap:10px;
+  width:100%;
+  min-width:0;
+  margin-top:auto;
+  padding-top:18px;
+}
+.registry-card .registry-signer-action{
+  display:inline-flex;
+  width:100%;
+  min-width:0;
+  min-height:46px;
+  align-items:center;
+  justify-content:center;
+  gap:9px;
+  padding:11px 15px;
+  border-radius:12px;
+  font-size:12px;
+  font-weight:800;
+  line-height:1.2;
+  white-space:nowrap;
+}
+.registry-signer-action .signer-icon{
+  flex:0 0 17px;
+  width:17px;
+  height:17px;
+  fill:none;
+  stroke:currentColor;
+  stroke-width:2;
+  stroke-linecap:round;
+  stroke-linejoin:round;
+}
+.registry-card .registry-signer-action.signer-ready{
+  background:#e7f7f1;
+  border:1px solid #a9dfcc;
+  color:#086950;
+  box-shadow:none;
+}
+.registry-card .registry-signer-action.signer-ready:hover,
+.registry-card .registry-signer-action.signer-ready:focus-visible{
+  background:#d7f1e7;
+  border-color:#75c9aa;
+  outline:3px solid rgba(10,159,141,.14);
+}
+.registry-actions-tools{
+  display:flex;
+  flex-wrap:nowrap;
+  align-items:center;
+  gap:9px;
+  min-width:0;
+}
+.registry-card .registry-actions-tools .registry-address-action{
+  flex:1 1 auto;
+  min-width:0;
+  min-height:40px;
+  padding:9px 10px;
+  white-space:nowrap;
+  font-size:11px;
+  border-radius:11px;
+}
+.registry-actions-tools .icon-button{
+  flex:0 0 40px;
+  width:40px;
+  min-width:40px;
+  height:40px;
+  border-radius:11px;
+}
+.registry-actions-hint{
+  flex:1 1 auto;
+  min-width:0;
+  color:var(--muted);
+  font-size:10px;
+  line-height:1.4;
+}
+@media(max-width:780px){
+  .registry-card .registry-actions{gap:11px}
+  .registry-card .registry-signer-action{font-size:13px;min-height:48px}
+  .registry-card .registry-actions-tools .registry-address-action{flex:1 1 auto}
+}
