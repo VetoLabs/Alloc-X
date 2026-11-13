@@ -1,9 +1,8 @@
-import { createPrivateKey, createPublicKey, generateKeyPairSync } from "node:crypto";
+import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { isValidClassicAddress, xrpToDrops } from "xrpl";
 
 import { InMemoryTreasuryAccounting } from "../../packages/accounting/src/index.ts";
 import { InMemoryAuditChain } from "../../packages/audit-chain/src/index.ts";
@@ -20,7 +19,6 @@ import {
 } from "../../services/approval-layer/src/index.ts";
 import { parsePaymentIntent, paymentIntentDigest, sha256Digest, type CanonicalValue, type PaymentIntent } from "../../packages/contracts/src/index.ts";
 import type { AutonomousPaymentPath } from "../../services/payment-path/src/index.ts";
-import { XrplAdapter, type PreparedXrplPayment } from "../../services/xrpl-adapter/src/index.ts";
 import { FileSecurityControlStore, TreasurySecurityControls, type ControlActor, type FreezeScope, type LimitControl } from "../../services/security-controls/src/index.ts";
 import { FileReceiptStore, ReceiptBuilder } from "../../services/receipt-builder/src/index.ts";
 import { AllocationAgentService, FileAllocationAgentSessionStore, type ResolvedBeneficiary } from "../../services/allocation-agent/src/index.ts";
@@ -62,10 +60,12 @@ type AgentPaymentPreparation = {
   readonly allocationName: string;
   readonly intent: PaymentIntent;
   readonly intentDigest: string;
-  readonly prepared: PreparedXrplPayment;
+  readonly prepared: PreparedAgentPayment;
   readonly receipt: EvaluationReceipt;
   readonly expiresAt: string;
 };
+
+type PreparedAgentPayment = { readonly network: "testnet"; readonly networkId: 1; readonly intentId: string; readonly intentDigest: string; readonly organizationId: string; readonly transaction: Readonly<Record<string, unknown>>; readonly preparedAtLedgerIndex: number };
 
 type ValidatedTestnetPayment = {
   readonly transactionHash: string;
@@ -87,7 +87,7 @@ export interface ConsoleServerOptions {
   readonly runtimeDirectory?: string;
   readonly settlement?: { readonly path: AutonomousPaymentPath; readonly treasuryAccount: string; readonly workerId: string };
   readonly testnetAccountReader?: (address: string) => Promise<TestnetAccountSnapshot>;
-  readonly agentPaymentAdapter?: Pick<XrplAdapter, "prepareNativePayment">;
+  readonly agentPaymentAdapter?: { prepareNativePayment(input: { readonly intentId: string; readonly intentDigest: string; readonly organizationId: string; readonly account: string; readonly destination: string; readonly amountXrp: string; readonly mode: "sequence" }): Promise<PreparedAgentPayment> };
   readonly testnetTransactionReader?: (hash: string) => Promise<ValidatedTestnetPayment>;
   /** Local identity fixtures. Production adapters must derive these actors from an authenticated session. */
   readonly securityActors?: { readonly operator: ControlActor; readonly approver: ControlActor; readonly escalator: ControlActor };
@@ -183,16 +183,7 @@ export async function createConsoleServer(options: ConsoleServerOptions = {}): P
   await mainnetActivation.open();
   let payments = await loadPayments(paymentStore);
   const agentPreparations = new Map<string, AgentPaymentPreparation>();
-  const agentPaymentAdapter = options.agentPaymentAdapter ?? new XrplAdapter({
-    endpoint: "wss://s.altnet.rippletest.net:51233/",
-    network: "testnet",
-    expectedNetworkId: 1,
-    maxFeeDrops: "1000",
-    minimumLastLedgerOffset: 3,
-    maximumLastLedgerOffset: 100,
-    targetLastLedgerOffset: 20,
-    signerCount: 0,
-  });
+  const agentPaymentAdapter = options.agentPaymentAdapter ?? { prepareNativePayment: prepareAgentTestnetPayment };
 
   return createServer(async (request, response) => {
     try {
@@ -679,7 +670,7 @@ function resolveAgentPayment(input: AgentPaymentRequest) {
   const amountMatches = [...input.message.matchAll(/\b(\d+(?:\.\d{1,6})?)\s*xrp\b/giu)];
   if (amountMatches.length !== 1) throw new TypeError("State one XRP amount, for example: pay Goodwill Clinic 200 XRP.");
   const amount = amountMatches[0]![1]!;
-  const amountDrops = xrpToDrops(amount);
+  const amountDrops = xrpAmountToDrops(amount);
   if (BigInt(amountDrops) <= 0n) throw new TypeError("Payment amount must be greater than zero.");
   const normalized = normalizeWords(input.message);
   const payeeMatches = input.registry.payees.filter((payee) => normalized.includes(normalizeWords(payee.name))).sort((left, right) => right.name.length - left.name.length);
@@ -889,6 +880,63 @@ async function readTestnetAccount(address: string): Promise<TestnetAccountSnapsh
     ledgerIndex: ledgerIndex as number,
     observedAt: now(),
   });
+}
+
+async function prepareAgentTestnetPayment(input: { readonly intentId: string; readonly intentDigest: string; readonly organizationId: string; readonly account: string; readonly destination: string; readonly amountXrp: string; readonly mode: "sequence" }): Promise<PreparedAgentPayment> {
+  if (!isValidClassicAddress(input.account) || !isValidClassicAddress(input.destination) || input.account === input.destination) throw new TypeError("XRPL payment accounts are invalid.");
+  const [serverInfo, accountInfo, feeInfo] = await Promise.all([
+    xrplTestnetRpc("server_info", []),
+    xrplTestnetRpc("account_info", [{ account: input.account, ledger_index: "validated" }]),
+    xrplTestnetRpc("fee", []),
+  ]);
+  const info = serverInfo.info as Record<string, unknown> | undefined;
+  const networkId = info?.network_id;
+  const validatedLedger = info?.validated_ledger as Record<string, unknown> | undefined;
+  const ledgerIndex = validatedLedger?.seq;
+  const accountData = accountInfo.account_data as Record<string, unknown> | undefined;
+  const sequence = accountData?.Sequence;
+  const drops = feeInfo.drops as Record<string, unknown> | undefined;
+  const fee = drops?.open_ledger_fee;
+  if (networkId !== 1 || !Number.isSafeInteger(ledgerIndex) || !Number.isSafeInteger(sequence) || typeof fee !== "string" || !/^\d+$/u.test(fee) || BigInt(fee) > 1000n) throw new Error("XRPL Testnet did not return safe transaction preparation values.");
+  const transaction = Object.freeze({ TransactionType: "Payment", Account: input.account, Destination: input.destination, Amount: xrpAmountToDrops(input.amountXrp), Fee: fee, Sequence: sequence, LastLedgerSequence: Number(ledgerIndex) + 20 });
+  return Object.freeze({ network: "testnet", networkId: 1, intentId: input.intentId, intentDigest: input.intentDigest, organizationId: input.organizationId, transaction, preparedAtLedgerIndex: Number(ledgerIndex) });
+}
+
+async function xrplTestnetRpc(method: string, params: readonly unknown[]): Promise<Record<string, unknown>> {
+  const response = await fetch(testnetJsonRpcEndpoint, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ method, params }), signal: AbortSignal.timeout(9_000) });
+  if (!response.ok) throw new Error("XRPL Testnet transaction preparation failed.");
+  const payload = await response.json() as { result?: Record<string, unknown> };
+  if (!payload.result || payload.result.status === "error" || typeof payload.result.error === "string") throw new Error(`XRPL Testnet rejected ${method}.`);
+  return payload.result;
+}
+
+function xrpAmountToDrops(value: string): string {
+  if (!/^(?:0|[1-9]\d*)(?:\.\d{1,6})?$/u.test(value)) throw new TypeError("XRP amount is invalid.");
+  const [whole = "0", fraction = ""] = value.split(".");
+  const drops = BigInt(whole) * 1_000_000n + BigInt(fraction.padEnd(6, "0"));
+  if (drops <= 0n) throw new TypeError("XRP amount must be greater than zero.");
+  return drops.toString();
+}
+
+function isValidClassicAddress(value: string): boolean {
+  if (!/^r[1-9A-HJ-NP-Za-km-z]{24,34}$/u.test(value)) return false;
+  const alphabet = "rpshnaf39wBUDNEGHJKLM4PQRST7VWXYZ2bcdeCg65jkm8oFqi1tuvAxyz";
+  let number = 0n;
+  for (const character of value) {
+    const index = alphabet.indexOf(character);
+    if (index < 0) return false;
+    number = number * 58n + BigInt(index);
+  }
+  let hex = number.toString(16);
+  if (hex.length % 2) hex = `0${hex}`;
+  const decoded = hex ? Buffer.from(hex, "hex") : Buffer.alloc(0);
+  let leading = 0;
+  while (leading < value.length && value[leading] === alphabet[0]) leading += 1;
+  const bytes = Buffer.concat([Buffer.alloc(leading), decoded]);
+  if (bytes.length !== 25 || bytes[0] !== 0) return false;
+  const payload = bytes.subarray(0, 21);
+  const checksum = createHash("sha256").update(createHash("sha256").update(payload).digest()).digest().subarray(0, 4);
+  return checksum.equals(bytes.subarray(21));
 }
 
 async function readValidatedTestnetPayment(transactionHash: string): Promise<ValidatedTestnetPayment> {
