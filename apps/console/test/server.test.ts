@@ -80,6 +80,8 @@ test("console exposes server-owned payment references and records a signed decis
     assert.match(appScript, /connectGemWalletDirect/);
     assert.match(appScript, /Allocation wallets/);
     assert.match(appScript, /Add payee/);
+    assert.match(appScript, /class="registry-form-body"/);
+    assert.match(appScript, />Create allocation</);
     assert.match(appScript, /data-wallet-id="gemwallet"/);
     assert.match(appScript, /data-wallet-id="crossmark"/);
     assert.doesNotMatch(appScript, /MetaMaskSnapAdapter|metamask-snap/);
@@ -106,6 +108,9 @@ test("console exposes server-owned payment references and records a signed decis
     assert.ok(stylesheet.includes(".wallet-picker-backdrop"));
     assert.ok(stylesheet.includes("/* Audit navigation scroll containment"));
     assert.ok(stylesheet.includes("overscroll-behavior-y: contain"));
+    assert.match(stylesheet, /\.registry-dialog\s*\{[\s\S]*max-height: calc\(100dvh - 32px\)/);
+    assert.match(stylesheet, /\.registry-form-body\s*\{[\s\S]*overflow-y: auto/);
+    assert.match(stylesheet, /\.registry-dialog \.modal-actions\s*\{[\s\S]*flex: 0 0 auto/);
     const first = bootstrap.paymentReferences.obligations[0]!;
     const paymentResponse = await fetch(`${baseUrl}/api/payments`, {
       method: "POST",

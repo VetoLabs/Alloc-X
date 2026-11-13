@@ -195,3 +195,79 @@ html, body, #app { max-width: 100%; overflow-x: clip; }
     background: #071b3f;
   }
 }
+
+/* Keep registry dialog actions available on short and mobile viewports. */
+.registry-dialog {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100dvh - 32px);
+  overflow: hidden;
+}
+.registry-dialog .modal-header {
+  display: block;
+  flex: 0 0 auto;
+  padding-right: 48px;
+}
+.registry-dialog .modal-header > div {
+  min-width: 0;
+}
+.registry-dialog .modal-close {
+  position: absolute;
+  top: 22px;
+  right: 22px;
+  z-index: 1;
+  display: grid;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  place-items: center;
+  border: 1px solid #dce3ef;
+  border-radius: 9px;
+  background: #fff;
+  color: #61708a;
+  font: 700 20px/1 system-ui, sans-serif;
+  cursor: pointer;
+}
+.registry-dialog .modal-close:hover,
+.registry-dialog .modal-close:focus-visible {
+  border-color: #aec2ec;
+  color: #1f49cd;
+  outline: 3px solid #e4ebff;
+  outline-offset: 2px;
+}
+.registry-dialog > form {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+.registry-form-body {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 3px 5px 3px 1px;
+  scrollbar-gutter: stable;
+}
+.registry-dialog .modal-actions {
+  flex: 0 0 auto;
+  margin-top: 16px;
+  padding-top: 16px;
+  background: #fff;
+}
+
+@media (max-width: 780px) {
+  .modal-backdrop {
+    padding: 10px;
+  }
+  .registry-dialog {
+    max-height: calc(100dvh - 20px);
+  }
+  .registry-dialog .modal-header {
+    margin-bottom: 15px;
+  }
+  .registry-dialog .modal-close { top: 16px; right: 16px; }
+  .registry-dialog .modal-actions .button {
+    flex: 1;
+  }
+}
