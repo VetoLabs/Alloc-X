@@ -16,6 +16,28 @@ export function isClassicAddress(value) {
   return /^r[1-9A-HJ-NP-Za-km-z]{24,34}$/.test(address);
 }
 
+// Address checks do not establish wallet ownership, payee identity or payment authority.
+// Fail closed for newly registered payees if the XRPL checksum validator did not load.
+function payeeAddressStatus(value) {
+  const validator = globalThis.xrpl?.isValidClassicAddress;
+  if (typeof validator !== 'function') return 'CHECK_UNAVAILABLE';
+  try { return validator(String(value ?? '').trim()) ? 'ADDRESS_CHECKED' : 'INVALID_ADDRESS'; }
+  catch { return 'CHECK_UNAVAILABLE'; }
+}
+
+function sanitizePayees(values) {
+  const names = new Set();
+  const addresses = new Set();
+  return values.map(sanitizePayee).filter((payee) => {
+    if (!payee) return false;
+    const name = payee.name.toLowerCase();
+    if (names.has(name) || addresses.has(payee.walletAddress)) return false;
+    names.add(name);
+    addresses.add(payee.walletAddress);
+    return true;
+  });
+}
+
 function emptyRegistry() {
   return { version: 1, allocations: [], payees: [] };
 }
@@ -41,7 +63,7 @@ function sanitizePayee(value) {
   if (!value || typeof value !== 'object') return null;
   const name = cleanText(value.name, 100);
   const walletAddress = cleanText(value.walletAddress, 80);
-  if (!name || !isClassicAddress(walletAddress)) return null;
+  if (!name || !/^r[1-9A-HJ-NP-Za-km-z]{24,34}$/.test(walletAddress)) return null;
   const allowedTypes = new Set(['SUPPLIER', 'EMPLOYEE', 'CONTRACTOR', 'OTHER']);
   const type = cleanText(value.type, 20).toUpperCase();
   return {
@@ -50,7 +72,7 @@ function sanitizePayee(value) {
     type: allowedTypes.has(type) ? type : 'OTHER',
     role: cleanText(value.role, 120),
     walletAddress,
-    status: value.status === 'VERIFIED' ? 'VERIFIED' : 'PENDING_VERIFICATION',
+    status: payeeAddressStatus(walletAddress),
     createdAt: cleanText(value.createdAt, 40) || new Date().toISOString(),
     updatedAt: cleanText(value.updatedAt, 40) || new Date().toISOString(),
   };
@@ -64,7 +86,7 @@ export function readWorkspaceRegistry(storage = globalThis.localStorage) {
     return {
       version: 1,
       allocations: Array.isArray(parsed.allocations) ? parsed.allocations.map(sanitizeAllocation).filter(Boolean) : [],
-      payees: Array.isArray(parsed.payees) ? parsed.payees.map(sanitizePayee).filter(Boolean) : [],
+      payees: sanitizePayees(Array.isArray(parsed.payees) ? parsed.payees : []),
     };
   } catch {
     return emptyRegistry();
@@ -75,7 +97,7 @@ export function writeWorkspaceRegistry(registry, storage = globalThis.localStora
   const safe = {
     version: 1,
     allocations: Array.isArray(registry?.allocations) ? registry.allocations.map(sanitizeAllocation).filter(Boolean) : [],
-    payees: Array.isArray(registry?.payees) ? registry.payees.map(sanitizePayee).filter(Boolean) : [],
+    payees: sanitizePayees(Array.isArray(registry?.payees) ? registry.payees : []),
   };
   storage?.setItem(STORAGE_KEY, JSON.stringify(safe));
   return safe;
@@ -108,7 +130,9 @@ export function removeAllocation(registry, allocationId) {
 
 export function addPayee(registry, input) {
   if (!cleanText(input.name, 100)) throw new Error('Enter the payee name.');
-  if (!isClassicAddress(input.walletAddress)) throw new Error('Enter a valid XRPL classic address beginning with r.');
+  const addressStatus = payeeAddressStatus(input.walletAddress);
+  if (addressStatus === 'CHECK_UNAVAILABLE') throw new Error('XRPL address validation is unavailable. Reload the page before adding a payee.');
+  if (addressStatus !== 'ADDRESS_CHECKED') throw new Error('Enter a valid XRPL classic address with a correct checksum.');
   const payee = sanitizePayee({ ...input, payeeId: makeId('payee') });
   if (registry.payees.some((item) => item.name.toLowerCase() === payee.name.toLowerCase())) throw new Error('A payee with this name already exists.');
   if (registry.payees.some((item) => item.walletAddress === payee.walletAddress)) throw new Error('This wallet is already registered to another payee.');
