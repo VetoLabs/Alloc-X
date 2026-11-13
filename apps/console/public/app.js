@@ -185,8 +185,8 @@ async function connectGemWalletDirect() {
   }
   const [addressResponse, networkResponse] = await Promise.all([gem.getAddress(), gem.getNetwork()]);
   const address = addressResponse?.result?.address || addressResponse?.publicAddress || addressResponse?.address;
-  const rawNetwork = networkResponse?.result?.network || networkResponse?.network;
-  const network = String(rawNetwork || '').toLowerCase();
+  const rawNetwork = readGemWalletNetwork(networkResponse);
+  const network = normalizeXrplNetwork(rawNetwork);
   if (!isClassicAddress(address)) throw new Error('GemWallet did not return a valid XRPL account. Unlock the extension and try again.');
   if (network !== 'testnet') throw new Error(`GemWallet is on ${rawNetwork || 'an unknown network'}. Select Testnet and try again.`);
   state.walletPickerOpen = false;
@@ -196,6 +196,26 @@ async function connectGemWalletDirect() {
   render();
   await refreshWalletBalance();
   return { address, network: { id: 'testnet' } };
+}
+
+function readGemWalletNetwork(response) {
+  const candidates = [response?.result?.network, response?.network, response?.result?.data?.network, response?.data?.network, response?.result];
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim()) return candidate.trim();
+    if (candidate && typeof candidate === 'object') {
+      const nested = candidate.id || candidate.name || candidate.network;
+      if (typeof nested === 'string' && nested.trim()) return nested.trim();
+    }
+  }
+  return '';
+}
+
+function normalizeXrplNetwork(value) {
+  const normalized = String(value || '').trim().toLowerCase().replace(/[\s_-]+/g, '');
+  if (normalized === 'testnet' || normalized === 'xrpltestnet' || normalized.endsWith('testnet')) return 'testnet';
+  if (normalized === 'mainnet' || normalized === 'xrplmainnet' || normalized.endsWith('mainnet')) return 'mainnet';
+  if (normalized === 'devnet' || normalized === 'xrpldevnet' || normalized.endsWith('devnet')) return 'devnet';
+  return normalized;
 }
 
 function svg(name, className = '') { return `<svg class="${className || 'nav-icon'}" viewBox="0 0 24 24" aria-hidden="true">${icons[name]}</svg>`; }
