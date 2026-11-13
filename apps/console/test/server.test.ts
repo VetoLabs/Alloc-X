@@ -303,3 +303,54 @@ test("console emergency freeze is durable and blocks payment creation before an 
     await rm(runtimeDirectory, { recursive: true, force: true });
   }
 });
+
+
+test("employee salary payments select the connected main wallet and cannot route supplier payments through payroll", async () => {
+  const runtimeDirectory = await mkdtemp(join(tmpdir(), "alloc-x-console-payroll-"));
+  const mainWallet = "rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh";
+  const grantWalletAndRecipient = "r3kmLJN5D28dHuH8vZNUZpMC43pEHpaocV";
+  const server = await createConsoleServer({
+    runtimeDirectory,
+    testnetAccountReader: async (account) => ({ account, balanceDrops: "1000000000", balanceXrp: "1000", ledgerIndex: 987654, observedAt: "2026-11-13T16:00:00.000Z" }),
+    agentPaymentAdapter: { prepareNativePayment: async (input) => ({
+      network: "testnet", networkId: 1, intentId: input.intentId, intentDigest: input.intentDigest,
+      organizationId: input.organizationId,
+      transaction: { TransactionType: "Payment", Account: input.account, Destination: input.destination, Amount: "20000000", Fee: "12", Sequence: 1, LastLedgerSequence: 987674 },
+      serializedTransaction: "ABCD", preparedAtLedgerIndex: 987654,
+    }) },
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  async function prepare(message: string, type: string, mainWalletAddress?: string) {
+    return fetch(`${baseUrl}/api/agent/payments/prepare`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        message, ...(mainWalletAddress ? { mainWalletAddress } : {}),
+        registry: {
+          allocations: [{ allocationId: "allocation_restricted", name: "Healthcare Grant", category: "Restricted grant", purpose: "Medical supplies", spendingRule: "Medical suppliers only", walletAddress: grantWalletAndRecipient }],
+          payees: [{ payeeId: "payee_alice", name: "Alice Worker", type, role: "Software engineer", walletAddress: grantWalletAndRecipient, status: "ADDRESS_CHECKED", createdAt: "2026-11-01T00:00:00.000Z" }],
+        },
+      }),
+    });
+  }
+  try {
+    const successful = await prepare("Pay Alice Worker 20 XRP salary", "EMPLOYEE", mainWallet);
+    assert.equal(successful.status, 201, JSON.stringify(await successful.clone().json()));
+    const prepared = await successful.json() as { payment: { sourceKind: string; sourceAccount: string; allocationName: string }; transaction: { Account: string; Destination: string } };
+    assert.equal(prepared.payment.sourceKind, "MAIN_WALLET_PAYROLL");
+    assert.equal(prepared.payment.sourceAccount, mainWallet);
+    assert.equal(prepared.transaction.Account, mainWallet);
+    assert.equal(prepared.transaction.Destination, grantWalletAndRecipient);
+    assert.equal(prepared.payment.allocationName, "Main wallet payroll");
+
+    const missingMain = await prepare("Pay Alice Worker 20 XRP salary", "EMPLOYEE");
+    assert.equal(missingMain.status, 400, JSON.stringify(await missingMain.clone().json()));
+    const supplier = await prepare("Pay Alice Worker 20 XRP salary", "SUPPLIER", mainWallet);
+    assert.equal(supplier.status, 400, JSON.stringify(await supplier.clone().json()));
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await rm(runtimeDirectory, { recursive: true, force: true });
+  }
+});
