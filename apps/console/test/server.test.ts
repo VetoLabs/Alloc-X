@@ -67,6 +67,12 @@ test("console exposes server-owned payment references and records a signed decis
     const invalidWalletResponse = await fetch(`${baseUrl}/api/xrpl/testnet/accounts/not-an-address`);
     assert.equal(invalidWalletResponse.status, 400);
     const appScript = await (await fetch(`${baseUrl}/app.js`)).text();
+    const walletSessionScriptResponse = await fetch(baseUrl + "/wallet-session.js");
+    assert.equal(walletSessionScriptResponse.status, 200);
+    const walletSessionScript = await walletSessionScriptResponse.text();
+    assert.match(walletSessionScript, /rememberOperatorWallet/);
+    assert.match(walletSessionScript, /forgetOperatorWallet/);
+    assert.match(walletSessionScript, /readOperatorWallet/);
     const registryScriptResponse = await fetch(baseUrl + "/workspace-registry.js");
     assert.equal(registryScriptResponse.status, 200);
     const registryScript = await registryScriptResponse.text();
@@ -77,6 +83,9 @@ test("console exposes server-owned payment references and records a signed decis
     assert.ok(appScript.includes("new sdk.GemWalletAdapter()"));
     assert.ok(appScript.includes("new sdk.CrossmarkAdapter()"));
     assert.ok(appScript.includes("walletManager.connect(walletId)"));
+    assert.match(appScript, /restoreOperatorWallet/);
+    assert.match(appScript, /rememberOperatorWallet\('gemwallet', address\)/);
+    assert.match(appScript, /forgetOperatorWallet\(\)/);
     assert.match(appScript, /connectGemWalletDirect/);
     assert.match(appScript, /Allocation wallets/);
     assert.match(appScript, /Add payee/);
