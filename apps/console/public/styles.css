@@ -356,3 +356,13 @@ html, body, #app { max-width: 100%; overflow-x: clip; }
   .registry-card .registry-signer-action{font-size:13px;min-height:48px}
   .registry-card .registry-actions-tools .registry-address-action{flex:1 1 auto}
 }
+
+
+/* Payroll signer is a deliberate, prominent authorization control. */
+.main-signer-card{display:flex;align-items:center;justify-content:space-between;gap:22px;margin-bottom:18px;border:1px solid #d9e5fa;background:linear-gradient(130deg,#fff,#f5f9ff)}
+.main-signer-copy{min-width:0;flex:1}.main-signer-copy .card-heading{margin-bottom:10px}.main-signer-copy .small{color:var(--muted);line-height:1.6}
+.main-signer-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}
+.main-signer-button{display:inline-flex;align-items:center;justify-content:center;gap:9px;min-height:45px;padding:10px 17px;border-radius:11px;font-weight:800;white-space:nowrap}
+.main-signer-button .signer-icon{width:17px;height:17px;flex:0 0 17px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.main-signer-button:disabled{cursor:not-allowed;opacity:.55}.payment-history-section{margin-top:18px}.ledger-loading{display:flex;align-items:center;justify-content:center;gap:12px;padding:28px;color:var(--muted)}.ledger-history-footer{display:flex;justify-content:center;margin-top:18px}
+@media(max-width:780px){.main-signer-card{flex-direction:column;align-items:stretch}.main-signer-actions{justify-content:stretch}.main-signer-actions .button{flex:1}.payment-history-section .card-heading{flex-wrap:wrap;gap:12px}}
