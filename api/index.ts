@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { createConsoleServer } from "../apps/console/server.ts";
 
-let serverPromise: Promise<ReturnType<typeof createConsoleServer>> | undefined;
+let serverPromise: ReturnType<typeof createConsoleServer> | undefined;
 
 /**
  * Vercel Node Function adapter. The console's existing request router remains
@@ -12,7 +12,7 @@ let serverPromise: Promise<ReturnType<typeof createConsoleServer>> | undefined;
  */
 export default async function handler(request: IncomingMessage, response: ServerResponse): Promise<void> {
   // Vercel functions can only write to /tmp; this is ephemeral demo state, NOT durable treasury storage.
-  serverPromise ??= createConsoleServer({ runtimeDirectory: join(tmpdir(), "alloc-x-console-demo") });
-  const server = await serverPromise;
+  const sharedServer = serverPromise ??= createConsoleServer({ runtimeDirectory: join(tmpdir(), "alloc-x-console-demo") });
+  const server = await sharedServer;
   server.emit("request", request, response);
 }
