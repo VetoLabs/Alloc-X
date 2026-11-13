@@ -130,6 +130,11 @@ async function walletConnected(account) {
 }
 
 function operatorAccount() {
+  // The GemWallet direct adapter is used when XRPL Connect cannot read its network metadata.
+  // Don't let a stale SDK account override a freshly checked GemWallet Testnet session.
+  if (state.wallet.name === 'GemWallet' && state.wallet.account && state.wallet.network === 'testnet') {
+    return { address: state.wallet.account, network: { id: 'testnet' } };
+  }
   return walletManager?.account || (state.wallet.account ? { address: state.wallet.account, network: { id: state.wallet.network || 'testnet' } } : null);
 }
 
