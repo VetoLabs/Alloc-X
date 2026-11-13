@@ -11,6 +11,9 @@ class MemoryStorage {
 
 const healthcareWallet = "rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh";
 const supplierWallet = "r3kmLJN5D28dHuH8vZNUZpMC43pEHpaocV";
+// Test fixture simulates the checksum-aware XRPL browser SDK loaded before app.js.
+const browserWithSdk = globalThis as typeof globalThis & { xrpl?: { isValidClassicAddress: (value: string) => boolean } };
+browserWithSdk.xrpl = { isValidClassicAddress: (address) => address === healthcareWallet || address === supplierWallet };
 
 test("workspace registry supports unlimited named allocations with independent wallets", () => {
   let registry = readWorkspaceRegistry(new MemoryStorage());
@@ -37,7 +40,7 @@ test("workspace registry persists allocations and typed payees and removes only 
   const restored = readWorkspaceRegistry(storage);
   assert.equal(restored.allocations[0]!.name, "Healthcare Grant");
   assert.equal(restored.payees[0]!.type, "SUPPLIER");
-  assert.equal(restored.payees[0]!.status, "PENDING_VERIFICATION");
+  assert.equal(restored.payees[0]!.status, "ADDRESS_CHECKED");
   assert.equal(removeAllocation(restored, allocation.allocationId).allocations.length, 0);
   assert.equal(removePayee(restored, payeeResult.payee.payeeId).payees.length, 0);
 });
@@ -48,4 +51,28 @@ test("workspace registry rejects duplicate names, duplicate payee wallets, and i
   assert.throws(() => addAllocation(registry, { name: "Sport", walletAddress: "not-an-address" }), /valid XRPL/i);
   registry = addPayee(registry, { name: "Ada", type: "EMPLOYEE", walletAddress: supplierWallet }).registry;
   assert.throws(() => addPayee(registry, { name: "Another person", type: "EMPLOYEE", walletAddress: supplierWallet }), /already registered/i);
+});
+
+test("payee registration checks checksum but does not require approval or identity proof", () => {
+  let registry = readWorkspaceRegistry(new MemoryStorage());
+  const registered = addPayee(registry, { name: "Supplier", type: "SUPPLIER", walletAddress: supplierWallet });
+  assert.equal(registered.payee.status, "ADDRESS_CHECKED");
+  registry = registered.registry;
+  const altered = supplierWallet.slice(0, -1) + (supplierWallet.endsWith("z") ? "x" : "z");
+  assert.match(altered, /^r[1-9A-HJ-NP-Za-km-z]{24,34}$/);
+  assert.throws(() => addPayee(registry, { name: "Different", type: "SUPPLIER", walletAddress: altered }), /correct checksum/i);
+  assert.throws(() => addPayee(registry, { name: "Second", type: "SUPPLIER", walletAddress: supplierWallet }), /already registered/i);
+  assert.throws(() => addPayee(registry, { name: "Supplier", type: "EMPLOYEE", walletAddress: healthcareWallet }), /already exists/i);
+});
+
+test("legacy pending or user-edited verified labels are never treated as administrator approvals", () => {
+  const storage = new MemoryStorage();
+  const duplicate = { payeeId: "p_1", name: "Supplier", type: "SUPPLIER", walletAddress: supplierWallet, status: "VERIFIED" };
+  storage.setItem("alloc-x.workspace-registry.v1", JSON.stringify({ version: 1, allocations: [], payees: [
+    duplicate, { ...duplicate, payeeId: "p_2", name: "Duplicate by address", status: "PENDING_VERIFICATION" }
+  ] }));
+  const loaded = readWorkspaceRegistry(storage);
+  assert.equal(loaded.payees.length, 1);
+  assert.equal(loaded.payees[0]!.status, "ADDRESS_CHECKED");
+  assert.equal(writeWorkspaceRegistry(loaded, storage).payees.length, 1);
 });
