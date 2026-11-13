@@ -1,5 +1,6 @@
 import { addAllocation, addPayee, assignAllocationWallet, isClassicAddress, readWorkspaceRegistry, removeAllocation, removePayee, writeWorkspaceRegistry } from './workspace-registry.js';
 import { readOperatorWallet, rememberOperatorWallet, forgetOperatorWallet } from './wallet-session.js';
+import { outgoingNativePayments } from './ledger-history.js';
 
 const icons = {
   grid: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
@@ -24,7 +25,7 @@ const icons = {
   trash: '<path d="M4 7h16M9 7V4h6v3M7 7l1 14h8l1-14M10 11v6M14 11v6"/>',
 };
 
-const state = { data: null, route: 'overview', activePaymentId: null, activeBeneficiaryId: null, agentSession: null, voiceInstruction: null, voiceState: 'IDLE', voiceTranscript: '', voiceConfidence: undefined, busy: false, mobileMenuOpen: false, walletPickerOpen: false, walletInstallProvider: null, walletConnecting: null, pendingAllocationWalletId: null, registryDialog: null, registry: readWorkspaceRegistry(), allocationBalances: {}, wallet: { status: 'DISCONNECTED', account: null, name: null, balance: null, error: null } };
+const state = { data: null, route: 'overview', activePaymentId: null, activeBeneficiaryId: null, agentSession: null, voiceInstruction: null, voiceState: 'IDLE', voiceTranscript: '', voiceConfidence: undefined, busy: false, mobileMenuOpen: false, walletPickerOpen: false, walletInstallProvider: null, walletConnecting: null, pendingAllocationWalletId: null, registryDialog: null, registry: readWorkspaceRegistry(), allocationBalances: {}, wallet: { status: 'DISCONNECTED', account: null, name: null, balance: null, error: null }, ledgerHistoryByAccount: {}, ledgerHistoryLoading: false, ledgerHistoryError: null };
 const routes = {
   overview: { label: 'Overview', icon: 'grid' },
   allocations: { label: 'Allocations', icon: 'funds' },
@@ -422,7 +423,41 @@ function voicePanel() {
   return `<section class="voice-panel review" aria-live="polite"><span>${svg('mic')}</span><div class="voice-review"><span class="voice-overline">Voice transcript · review required</span><strong>${esc(instruction.transcript)}</strong><p>This transcript is recorded with your consent. Confirm it before Alloc-X can interpret it; confirmation still cannot sign or settle a payment.</p></div><div class="voice-actions">${button('Discard', 'voice-discard', 'secondary')}<button class="button primary" type="button" data-action="voice-confirm">Confirm instruction ${svg('arrow', 'nav-icon')}</button></div></section>`;
 }
 
-function payments() { const payments = state.data.payments; const active = state.data.capabilities.canSettle; return `<section class="page-heading"><div><p class="eyebrow">Payment operations</p><h1>Payments</h1><p>Each item is built from server-owned references, then bound to a signed Approval Layer outcome.</p></div>${button(`${svg('plus', 'nav-icon')} Create payment`, 'route-new-payment', 'primary')}</section><section class="card pad"><div class="card-heading"><div><h2>Payment queue</h2><p>${active ? 'Independent signing, ledger validation, and reconciliation are available.' : 'Settlement is intentionally unavailable in this local workspace.'}</p></div><span class="status neutral">${payments.length} recorded</span></div>${payments.length ? paymentTable(payments) : empty('receipt', 'No payment records', 'Create a payment to see its controls, receipt, and lifecycle timeline here.')}</section>`; }
+function ledgerSourceWallets() {
+  const sources = [];
+  if (state.wallet.network === 'testnet' && state.wallet.account) sources.push({ address: state.wallet.account, name: 'Main wallet' });
+  for (const allocation of state.registry.allocations) if (allocation.walletAddress) sources.push({ address: allocation.walletAddress, name: allocation.name });
+  return [...new Map(sources.map((source) => [source.address, source])).values()];
+}
+
+function ledgerHistoryRows() {
+  const rows = ledgerSourceWallets().flatMap((source) => (state.ledgerHistoryByAccount[source.address]?.rows || []).map((row) => ({ ...row, sourceName: source.name })));
+  return [...new Map(rows.map((row) => [row.hash, row])).values()].sort((a, b) => (Date.parse(b.timestamp || '') || 0) - (Date.parse(a.timestamp || '') || 0));
+}
+
+function ledgerPaymentTable(rows) {
+  return `<div class="table-wrap"><table class="table"><thead><tr><th>Recipient</th><th>Source wallet</th><th>Amount</th><th>Validated</th><th>Ledger</th><th></th></tr></thead><tbody>${rows.map((row) => {
+    const payee = state.registry.payees.find((item) => item.walletAddress === row.destination);
+    return `<tr><td><span class="main-cell">${esc(payee?.name || compact(row.destination))}</span><span class="sub-cell">${esc(compact(row.hash))}</span></td><td>${esc(row.sourceName)}</td><td class="amount">${money(row.amountXrp)}</td><td>${row.timestamp ? esc(when(row.timestamp)) : 'Time unavailable'}</td><td>${row.ledgerIndex === null ? '—' : esc(row.ledgerIndex)}</td><td><a class="table-link" href="https://testnet.xrpl.org/transactions/${esc(row.hash)}" target="_blank" rel="noopener noreferrer">View on XRPL</a></td></tr>`;
+  }).join('')}</tbody></table></div>`;
+}
+
+function payments() {
+  const recorded = state.data.payments;
+  const queue = recorded.filter((payment) => payment.state !== 'VALIDATED');
+  const completed = recorded.filter((payment) => payment.state === 'VALIDATED');
+  const sources = ledgerSourceWallets();
+  const history = ledgerHistoryRows();
+  const hasMore = sources.some((source) => state.ledgerHistoryByAccount[source.address]?.marker);
+  return `<section class="page-heading"><div><p class="eyebrow">Payment operations</p><h1>Payments</h1><p>Queued decisions, recorded completions, and validated transactions from your XRPL Testnet wallet sources.</p></div>${button(`${svg('plus', 'nav-icon')} Create payment`, 'route-agent', 'primary')}</section>
+    ${mainWalletSigningCard()}
+    <section class="card pad payment-history-section"><div class="card-heading"><div><h2>Queue, review and decisions</h2><p>Pending, blocked or awaiting-settlement payment records.</p></div><span class="status neutral">${queue.length} recorded</span></div>${queue.length ? paymentTable(queue) : empty('receipt', 'No queued payments', 'Payments needing review or settlement appear here.')}</section>
+    <section class="card pad payment-history-section"><div class="card-heading"><div><h2>Completed Alloc-X payments</h2><p>Validated payments with a signed approval and receipt available to this workspace.</p></div><span class="status neutral">${completed.length} recorded</span></div>${completed.length ? paymentTable(completed) : empty('receipt', 'No completed workspace records', 'Completed decisions appear here. Ledger history also survives a server restart.')}</section>
+    <section class="card pad payment-history-section"><div class="card-heading"><div><h2>Validated XRPL Testnet history</h2><p>Read-only outgoing XRP transfers from main and registered allocation wallets. Transfers without matching receipts are not necessarily Alloc-X agent actions.</p></div>${button(state.ledgerHistoryLoading ? 'Loading…' : 'Refresh history', 'ledger-refresh', 'secondary', state.ledgerHistoryLoading ? 'disabled' : '')}</div>
+    ${state.ledgerHistoryError ? `<div class="banner wallet-banner attention" role="status">${svg('alert')}<div><strong>Ledger history needs attention</strong>${esc(state.ledgerHistoryError)}</div></div>` : ''}
+    ${!sources.length ? empty('wallet', 'No Testnet wallets', 'Connect your main wallet or register allocation addresses to read historical transfers.') : history.length ? ledgerPaymentTable(history) : state.ledgerHistoryLoading ? '<div class="ledger-loading"><span class="loader"></span>Reading validated XRPL ledger transactions…</div>' : empty('receipt', 'No validated outgoing XRP payments found', 'Completed native XRP transfers on Testnet appear here.')}
+    ${hasMore ? `<div class="ledger-history-footer">${button(state.ledgerHistoryLoading ? 'Loading older…' : 'Load older transactions', 'ledger-load-more', 'secondary', state.ledgerHistoryLoading ? 'disabled' : '')}</div>` : ''}</section>`;
+}
 
 function paymentTable(payments) { return `<div class="table-wrap"><table class="table"><thead><tr><th>Payment</th><th>Allocation</th><th>Amount</th><th>Security outcome</th><th>Lifecycle</th><th></th></tr></thead><tbody>${payments.map((payment) => `<tr><td><span class="main-cell">${esc(paymentTitle(payment))}</span><span class="sub-cell">${esc(payment.paymentId)}</span></td><td>${esc(paymentAllocationName(payment))}</td><td class="amount">${money(payment.intent.amount)}</td><td>${status(payment.decision.decision.outcome)}</td><td><span class="status neutral">${esc(labelState(payment.state))}</span></td><td><button class="table-link" data-action="open-payment" data-payment-id="${esc(payment.paymentId)}">Open <span aria-hidden="true">→</span></button></td></tr>`).join('')}</tbody></table></div>`; }
 
