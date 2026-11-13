@@ -188,7 +188,18 @@ async function connectGemWalletDirect() {
   const rawNetwork = readGemWalletNetwork(networkResponse);
   const network = normalizeXrplNetwork(rawNetwork);
   if (!isClassicAddress(address)) throw new Error('GemWallet did not return a valid XRPL account. Unlock the extension and try again.');
-  if (network !== 'testnet') throw new Error(`GemWallet is on ${rawNetwork || 'an unknown network'}. Select Testnet and try again.`);
+  if (network !== 'testnet') {
+    const networkUnknown = !network || network === 'unknown';
+    if (networkUnknown) {
+      try {
+        const probe = await api(`/api/xrpl/testnet/accounts/${encodeURIComponent(address)}`);
+        if (probe?.network === 'testnet') network = 'testnet';
+      } catch {
+        // Keep the explicit network gate below. An unverified address must not connect.
+      }
+    }
+    if (network !== 'testnet') throw new Error(`GemWallet is on ${rawNetwork || 'an unknown network'}. Select Testnet and try again.`);
+  }
   state.walletPickerOpen = false;
   rememberOperatorWallet('gemwallet', address);
   state.wallet = { status: 'VERIFYING', account: address, name: 'GemWallet', network: 'testnet', balance: null, error: null };

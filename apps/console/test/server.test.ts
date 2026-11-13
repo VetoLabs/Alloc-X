@@ -89,6 +89,7 @@ test("console exposes server-owned payment references and records a signed decis
     assert.match(appScript, /connectGemWalletDirect/);
     assert.match(appScript, /readGemWalletNetwork/);
     assert.match(appScript, /normalizeXrplNetwork/);
+    assert.match(appScript, /api\(`\/api\/xrpl\/testnet\/accounts/);
     assert.match(appScript, /Allocation wallets/);
     assert.match(appScript, /Add payee/);
     assert.match(appScript, /class="registry-form-body"/);
