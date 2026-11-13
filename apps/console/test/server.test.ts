@@ -264,6 +264,9 @@ test("agent prepares an approved registered payment and records only the matchin
     const prepared = await preparedResponse.json() as { authorizationId: string; authorization: { token: string; signature: string; keyId: string }; transaction: { Account: string; Destination: string; Amount: string }; approval: { decision: { outcome: string } } };
     assert.equal(prepared.approval.decision.outcome, "ALLOW");
     assert.deepEqual({ Account: prepared.transaction.Account, Destination: prepared.transaction.Destination, Amount: prepared.transaction.Amount }, { Account: source, Destination: destination, Amount: "20000000" });
+    const queued = await (await fetch(`${baseUrl}/api/payments`)).json() as { payments: readonly { paymentId: string; state: string }[] };
+    assert.equal(queued.payments.length, 1, "approved agent payment must appear in the queue before settlement");
+    assert.equal(queued.payments[0]?.state, "AWAITING_SETTLEMENT");
 
     const completedResponse = await fetch(`${baseUrl}/api/agent/payments/complete`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ authorizationId: prepared.authorizationId, authorization: prepared.authorization, transactionHash }) });
     assert.equal(completedResponse.status, 201, JSON.stringify(await completedResponse.clone().json()));
@@ -273,6 +276,7 @@ test("agent prepares an approved registered payment and records only the matchin
     assert.deepEqual(completed.payment.display, { instruction: "Goodwill clinic and pharmacy 20 XRP now", payeeName: "Goodwill clinic and pharmacy", allocationName: "Healthcare Grant" });
     const listed = await (await fetch(`${baseUrl}/api/payments`)).json() as { payments: readonly { transactionHash?: string }[] };
     assert.equal(listed.payments[0]?.transactionHash, transactionHash);
+    assert.equal(listed.payments.length, 1, "completing the agent payment replaces its queue entry rather than duplicating it");
   } finally {
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     await rm(runtimeDirectory, { recursive: true, force: true });
