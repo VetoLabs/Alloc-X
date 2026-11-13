@@ -133,6 +133,7 @@ async function walletConnected(account) {
   completePendingAllocationWallet(account.address);
   if (state.data) render();
   await refreshWalletBalance();
+  if (state.route === 'payments') void refreshLedgerHistory();
 }
 
 function operatorAccount() {
@@ -213,6 +214,7 @@ async function connectGemWalletDirect() {
   completePendingAllocationWallet(address);
   render();
   await refreshWalletBalance();
+  if (state.route === 'payments') void refreshLedgerHistory();
   return { address, network: { id: 'testnet' } };
 }
 
@@ -442,6 +444,41 @@ function ledgerPaymentTable(rows) {
   }).join('')}</tbody></table></div>`;
 }
 
+async function refreshLedgerHistory(loadMore = false) {
+  if (state.ledgerHistoryLoading) return;
+  const sources = ledgerSourceWallets();
+  if (!sources.length) { state.ledgerHistoryError = null; if (state.route === 'payments') render(); return; }
+  const Client = globalThis.xrpl?.Client;
+  if (!Client) { state.ledgerHistoryError = 'XRPL Testnet client is unavailable. Reload the workspace.'; if (state.route === 'payments') render(); return; }
+  state.ledgerHistoryLoading = true;
+  state.ledgerHistoryError = null;
+  if (state.route === 'payments') render();
+  const client = new Client('wss://s.altnet.rippletest.net:51233/');
+  const failures = [];
+  try {
+    await client.connect();
+    for (const source of sources) {
+      const previous = state.ledgerHistoryByAccount[source.address];
+      if (loadMore && !previous?.marker) continue;
+      try {
+        const query = { command: 'account_tx', account: source.address, ledger_index_min: -1, ledger_index_max: -1, binary: false, forward: false, limit: 200 };
+        if (loadMore) query.marker = previous.marker;
+        const result = (await client.request(query))?.result;
+        if (!Array.isArray(result?.transactions)) throw new Error('The ledger did not return a transaction list.');
+        const rows = outgoingNativePayments(result.transactions, source.address);
+        const merged = loadMore ? [...(previous?.rows || []), ...rows] : rows;
+        state.ledgerHistoryByAccount[source.address] = { rows: [...new Map(merged.map((row) => [row.hash, row])).values()], marker: result.marker || null };
+      } catch (error) { failures.push(`${source.name}: ${error.message}`); }
+    }
+    if (failures.length) state.ledgerHistoryError = failures.join(' ');
+  } catch (error) { state.ledgerHistoryError = error.message || 'XRPL Testnet ledger history is currently unavailable.'; }
+  finally {
+    if (client.isConnected()) await client.disconnect().catch(() => {});
+    state.ledgerHistoryLoading = false;
+    if (state.route === 'payments') render();
+  }
+}
+
 function payments() {
   const recorded = state.data.payments;
   const queue = recorded.filter((payment) => payment.state !== 'VALIDATED');
@@ -540,7 +577,7 @@ function scrollToPageStart() {
 
 function bind() {
   if (voiceCapture && state.voiceState === 'LISTENING') updateVoicePreview(voiceCapture);
-  document.querySelectorAll('[data-route]').forEach((element) => element.addEventListener('click', (event) => { event.preventDefault(); state.mobileMenuOpen = false; state.route = element.dataset.route; state.activePaymentId = null; state.activeBeneficiaryId = null; render(); scrollToPageStart(); if (state.route === 'allocations') refreshAllocationBalances(); }));
+  document.querySelectorAll('[data-route]').forEach((element) => element.addEventListener('click', (event) => { event.preventDefault(); state.mobileMenuOpen = false; state.route = element.dataset.route; state.activePaymentId = null; state.activeBeneficiaryId = null; render(); scrollToPageStart(); if (state.route === 'allocations') refreshAllocationBalances(); if (state.route === 'payments') void refreshLedgerHistory(); }));
   document.querySelectorAll('[data-action]').forEach((element) => element.addEventListener('click', onAction));
   const agentForm = document.querySelector('#agent-form');
   if (agentForm) agentForm.addEventListener('submit', submitAgentInstruction);
@@ -626,6 +663,8 @@ async function onAction(event) {
   if (action === 'enable-allocation-signer') return enableAllocationSigner(event.currentTarget.dataset.allocationId);
   if (action === 'enable-main-signer') return enableMainWalletSigner();
   if (action === 'disable-main-signer') { mainWalletSigner = null; render(); toast('Main wallet signing disabled', 'Autonomous payroll signing is now disabled for this tab.'); return; }
+  if (action === 'ledger-refresh') return refreshLedgerHistory();
+  if (action === 'ledger-load-more') return refreshLedgerHistory(true);
   if (action === 'refresh-allocation') return refreshAllocationBalance(event.currentTarget.dataset.allocationId, true);
   if (action === 'remove-allocation') return removeRegisteredAllocation(event.currentTarget.dataset.allocationId);
   if (action === 'remove-payee') return removeRegisteredPayee(event.currentTarget.dataset.payeeId);
@@ -635,7 +674,7 @@ async function onAction(event) {
   if (action === 'reload') { await load(); await refreshWalletBalance(); return refreshAllocationBalances(); }
   if (action === 'route-allocations') { state.route = 'allocations'; render(); scrollToPageStart(); refreshAllocationBalances(); return; }
   if (action === 'route-new-payment' || action === 'route-agent') { state.route = 'agent'; render(); scrollToPageStart(); return; }
-  if (action === 'route-payments') { state.route = 'payments'; render(); scrollToPageStart(); return; }
+  if (action === 'route-payments') { state.route = 'payments'; render(); scrollToPageStart(); void refreshLedgerHistory(); return; }
   if (action === 'route-beneficiaries') { state.route = 'beneficiaries'; render(); scrollToPageStart(); return; }
   if (action === 'open-payment') { state.activePaymentId = event.currentTarget.dataset.paymentId; state.route = 'payment-detail'; render(); scrollToPageStart(); return; }
   if (action === 'open-beneficiary') { state.activeBeneficiaryId = event.currentTarget.dataset.beneficiaryId; state.route = 'beneficiary-detail'; render(); scrollToPageStart(); return; }
@@ -767,6 +806,7 @@ async function executeAgentPayment(message) {
   state.activePaymentId = completed.payment.paymentId;
   state.route = 'payment-detail';
   await Promise.all([refreshWalletBalance(), refreshAllocationBalances()]);
+  void refreshLedgerHistory();
   toast('Payment completed', completed.message);
 }
 
