@@ -3,6 +3,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isValidClassicAddress, xrpToDrops } from "xrpl";
 
 import { InMemoryTreasuryAccounting } from "../../packages/accounting/src/index.ts";
 import { InMemoryAuditChain } from "../../packages/audit-chain/src/index.ts";
@@ -14,9 +15,12 @@ import {
   DurableSecurityDecisionService,
   FileSecurityDecisionJournal,
   ApprovalLayerService,
+  assertSettlementAuthorized,
   type EvaluationReceipt,
 } from "../../services/approval-layer/src/index.ts";
+import { parsePaymentIntent, paymentIntentDigest, sha256Digest, type CanonicalValue, type PaymentIntent } from "../../packages/contracts/src/index.ts";
 import type { AutonomousPaymentPath } from "../../services/payment-path/src/index.ts";
+import { XrplAdapter, type PreparedXrplPayment } from "../../services/xrpl-adapter/src/index.ts";
 import { FileSecurityControlStore, TreasurySecurityControls, type ControlActor, type FreezeScope, type LimitControl } from "../../services/security-controls/src/index.ts";
 import { FileReceiptStore, ReceiptBuilder } from "../../services/receipt-builder/src/index.ts";
 import { AllocationAgentService, FileAllocationAgentSessionStore, type ResolvedBeneficiary } from "../../services/allocation-agent/src/index.ts";
@@ -48,7 +52,34 @@ type PaymentView = {
   readonly receiptId?: string;
   readonly receiptHash?: string;
   readonly receiptLinkDigest?: string;
+  readonly display?: { readonly instruction: string; readonly payeeName: string; readonly allocationName: string };
 };
+
+type AgentPaymentPreparation = {
+  readonly authorizationId: string;
+  readonly instruction: string;
+  readonly payeeName: string;
+  readonly allocationName: string;
+  readonly intent: PaymentIntent;
+  readonly intentDigest: string;
+  readonly prepared: PreparedXrplPayment;
+  readonly receipt: EvaluationReceipt;
+  readonly expiresAt: string;
+};
+
+type ValidatedTestnetPayment = {
+  readonly transactionHash: string;
+  readonly account: string;
+  readonly destination: string;
+  readonly amountDrops: string;
+  readonly ledgerIndex: number;
+  readonly validatedAt: string;
+  readonly resultCode: "tesSUCCESS";
+};
+
+type WorkspaceAllocationInput = { readonly allocationId: string; readonly name: string; readonly category: string; readonly purpose: string; readonly spendingRule: string; readonly walletAddress: string };
+type WorkspacePayeeInput = { readonly payeeId: string; readonly name: string; readonly type: string; readonly role: string; readonly walletAddress: string; readonly status: string; readonly createdAt: string };
+type AgentPaymentRequest = { readonly message: string; readonly sourceAccount: string; readonly registry: { readonly allocations: readonly WorkspaceAllocationInput[]; readonly payees: readonly WorkspacePayeeInput[] } };
 
 type StoredPayments = { readonly contractVersion: "1.0"; readonly payments: readonly PaymentView[] };
 
@@ -56,6 +87,8 @@ export interface ConsoleServerOptions {
   readonly runtimeDirectory?: string;
   readonly settlement?: { readonly path: AutonomousPaymentPath; readonly treasuryAccount: string; readonly workerId: string };
   readonly testnetAccountReader?: (address: string) => Promise<TestnetAccountSnapshot>;
+  readonly agentPaymentAdapter?: Pick<XrplAdapter, "prepareNativePayment">;
+  readonly testnetTransactionReader?: (hash: string) => Promise<ValidatedTestnetPayment>;
   /** Local identity fixtures. Production adapters must derive these actors from an authenticated session. */
   readonly securityActors?: { readonly operator: ControlActor; readonly approver: ControlActor; readonly escalator: ControlActor };
 }
@@ -149,6 +182,17 @@ export async function createConsoleServer(options: ConsoleServerOptions = {}): P
   });
   await mainnetActivation.open();
   let payments = await loadPayments(paymentStore);
+  const agentPreparations = new Map<string, AgentPaymentPreparation>();
+  const agentPaymentAdapter = options.agentPaymentAdapter ?? new XrplAdapter({
+    endpoint: "wss://s.altnet.rippletest.net:51233/",
+    network: "testnet",
+    expectedNetworkId: 1,
+    maxFeeDrops: "1000",
+    minimumLastLedgerOffset: 3,
+    maximumLastLedgerOffset: 100,
+    targetLastLedgerOffset: 20,
+    signerCount: 0,
+  });
 
   return createServer(async (request, response) => {
     try {
@@ -177,9 +221,9 @@ export async function createConsoleServer(options: ConsoleServerOptions = {}): P
           securityControls: controls.snapshot(),
           policyVersions: [{ policyVersion, status: "published", effectiveFrom: "2026-01-01T00:00:00.000Z", summary: "Payment, reserve, evidence, beneficiary, and velocity controls" }],
           beneficiaryEvents: beneficiaries.notifications(organizationId),
-          signerHealth: options.settlement ? { status: "HEALTHY", quorum: "Independent signing path configured", detail: "Ledger submission and reconciliation are available." } : { status: "NOT_CONFIGURED", quorum: "No signer quorum configured", detail: "Payment settlement stays unavailable until independent signer and ledger services are connected." },
-          capabilities: { canCreatePayment: true, canSettle: options.settlement !== undefined, settlementMessage: options.settlement ? "Independent signing, validation, and reconciliation are active." : "XRPL settlement activates after the independent signer and ledger adapter are configured." },
-          agent: { enabled: true, commandFormat: "pay <amount> <asset> to <beneficiary> for <purpose>", safety: "The agent can resolve approved records and make bounded drafts. It has no signing, credential, policy-publication, database, or arbitrary-network access." },
+          signerHealth: options.settlement ? { status: "HEALTHY", quorum: "Independent signing path configured", detail: "Ledger submission and reconciliation are available." } : { status: "WALLET_AUTHORIZATION", quorum: "Connected treasury wallet", detail: "Testnet payments are authorized in the connected XRPL wallet, then independently validated before Alloc-X records settlement." },
+          capabilities: { canCreatePayment: true, canSettle: true, settlementMessage: options.settlement ? "Independent signing, validation, and reconciliation are active." : "Connected XRPL wallets can authorize Testnet settlement; Alloc-X validates the final ledger result." },
+          agent: { enabled: true, commandFormat: "Tell Alloc-X the registered payee and XRP amount, for example: pay Goodwill Clinic 200 XRP", safety: "The agent resolves registered records, obtains a signed Approval Layer decision, prepares a bounded transaction, requests wallet authorization, and records only validated Testnet settlement." },
           operations: operationalMonitor.snapshot(),
           mainnetActivation: {
             ...mainnetActivation.readiness(),
@@ -242,6 +286,109 @@ export async function createConsoleServer(options: ConsoleServerOptions = {}): P
         const body = parseAgentMessage(await requestJson(request));
         const session = await allocationAgent.handle({ organizationId, principalId: "principal_allocation_agent", sessionId, message: body.message, occurredAt: now() });
         return json(response, 200, { session, message: session.state === "DRAFTED" ? "A bounded draft was recorded. It still needs the normal protected payment workflow before any signing or settlement." : session.state === "AWAITING_EVIDENCE" ? "Evidence is required before this instruction can become a draft." : "The agent needs a complete, explicit instruction." });
+      }
+      if (request.method === "POST" && url.pathname === "/api/agent/payments/prepare") {
+        const body = parseAgentPaymentRequest(await requestJson(request));
+        const resolved = resolveAgentPayment(body);
+        controls.assertPaymentAllowed({ organizationId, beneficiaryId: resolved.beneficiaryId, asset: "XRP" });
+        const account = await (options.testnetAccountReader ?? readTestnetAccount)(body.sourceAccount);
+        if (account.account !== body.sourceAccount) throw new Error("XRPL account response did not match the selected allocation wallet.");
+        if (BigInt(account.balanceDrops) <= BigInt(resolved.amountDrops)) throw new TypeError(`${resolved.allocation.name} does not have enough validated XRP to cover this payment and ledger reserve.`);
+        const preparedAt = now();
+        const token = crypto.randomUUID().replaceAll("-", "");
+        const intent = parsePaymentIntent({
+          contractVersion: "1.0",
+          intentId: `pi_${token}`,
+          organizationId,
+          idempotencyKey: `${organizationId}/agent/${token}`,
+          sourceObligationId: `obl_${token}`,
+          allocationId: resolved.allocationId,
+          amount: resolved.amount,
+          asset: "XRP",
+          beneficiaryId: resolved.beneficiaryId,
+          beneficiaryWalletVersion: 1,
+          purposeCode: "workspace-payment",
+          evidenceManifestHash: sha256Digest({ instruction: body.message, payeeId: resolved.payee.payeeId, allocationId: resolved.allocation.allocationId } as CanonicalValue),
+          policyVersion: "policy_workspace_testnet_2026",
+          requestedExecutionWindow: { notBefore: preparedAt, expiresAt: new Date(Date.parse(preparedAt) + 5 * 60_000).toISOString() },
+          createdBy: { principalId: "principal_allocation_agent", actorType: "agent" },
+        });
+        const intentDigest = paymentIntentDigest(intent);
+        const securityRequest = {
+          organizationId,
+          correlationId: `corr_${token}`,
+          rawCredentials: "local-console-service",
+          intent,
+          policy: workspacePaymentPolicy(),
+          context: workspaceEvaluationContext(intent, account.balanceXrp, resolved.payee.createdAt),
+        };
+        const approvalReceipt = await security.evaluate(securityRequest);
+        if (approvalReceipt.signedDecision.decision.outcome !== "ALLOW") {
+          return json(response, 409, { error: `Approval Layer returned ${approvalReceipt.signedDecision.decision.outcome}. ${approvalReceipt.signedDecision.decision.reasonCodes.join(", ") || "The payment requires review."}` });
+        }
+        const prepared = await agentPaymentAdapter.prepareNativePayment({ intentId: intent.intentId, intentDigest, organizationId, account: body.sourceAccount, destination: resolved.payee.walletAddress, amountXrp: resolved.amount, mode: "sequence" });
+        const authorizationId = `authorization_${token}`;
+        const preparation: AgentPaymentPreparation = Object.freeze({ authorizationId, instruction: body.message, payeeName: resolved.payee.name, allocationName: resolved.allocation.name, intent, intentDigest, prepared, receipt: approvalReceipt, expiresAt: intent.requestedExecutionWindow.expiresAt });
+        agentPreparations.set(authorizationId, preparation);
+        const authorizationToken = Buffer.from(JSON.stringify(preparation)).toString("base64url");
+        const authorization = { token: authorizationToken, signature: signer.sign(authorizationToken), keyId: signer.keyId };
+        return json(response, 201, {
+          authorizationId,
+          authorization,
+          transaction: prepared.transaction,
+          payment: { amount: intent.amount, asset: intent.asset, payeeName: preparation.payeeName, allocationName: preparation.allocationName, sourceAccount: body.sourceAccount, destination: resolved.payee.walletAddress },
+          approval: approvalReceipt.signedDecision,
+          message: `Approval Layer allowed ${intent.amount} XRP from ${preparation.allocationName} to ${preparation.payeeName}. Authorize the prepared transaction in your connected wallet.`,
+        });
+      }
+      if (request.method === "POST" && url.pathname === "/api/agent/payments/complete") {
+        const body = parseAgentPaymentCompletion(await requestJson(request));
+        const existing = payments.find((payment) => payment.transactionHash === body.transactionHash);
+        if (existing) return json(response, 200, { payment: existing, message: "The transaction was already validated and recorded." });
+        const preparation = agentPreparations.get(body.authorizationId) ?? restoreAgentPreparation(body.authorization, verifier);
+        if (preparation.authorizationId !== body.authorizationId) throw new TypeError("Payment authorization identifier does not match its signed execution record.");
+        assertSettlementAuthorized({ signedDecision: preparation.receipt.signedDecision, organizationId, intent: preparation.intent, now: now(), verifier });
+        const validated = await (options.testnetTransactionReader ?? readValidatedTestnetPayment)(body.transactionHash);
+        if (validated.account !== preparation.prepared.transaction.Account || validated.destination !== preparation.prepared.transaction.Destination || validated.amountDrops !== preparation.prepared.transaction.Amount) throw new TypeError("Validated XRPL transaction does not match the payment authorized by the Approval Layer.");
+        const completedAt = validated.validatedAt;
+        const paymentId = `pay_${preparation.intent.intentId.slice(3)}`;
+        const issued = await receipts.issue({
+          receiptId: `receipt_${paymentId.slice(4)}`,
+          organizationId,
+          intentId: preparation.intent.intentId,
+          intentDigest: preparation.intentDigest,
+          decisionId: preparation.receipt.signedDecision.decision.decisionId,
+          policyVersion: preparation.intent.policyVersion,
+          evidenceManifestHash: preparation.intent.evidenceManifestHash,
+          securityOutcome: "ALLOW",
+          reasonCodes: preparation.receipt.signedDecision.decision.reasonCodes,
+          settlement: { status: "validated", transactionHash: validated.transactionHash },
+          generatedAt: completedAt,
+          policyCitations: [{ clause: "Workspace Testnet payment policy", sourceHash: preparation.receipt.evaluation.policyDigest }],
+          budgetMovement: { allocationId: preparation.intent.allocationId, amount: preparation.intent.amount, state: "VALIDATED" },
+          securityDecision: { decisionDigest: preparation.receipt.signedDecision.decisionDigest, signature: preparation.receipt.signedDecision.signature, signerKeyId: preparation.receipt.signedDecision.keyId },
+          signerAttestations: [{ signerId: "connected-xrpl-wallet", status: "AUTHORIZED" }],
+          ledger: { network: "xrpl-testnet", ledgerIndex: validated.ledgerIndex, validatedAt: validated.validatedAt },
+        });
+        const payment: PaymentView = Object.freeze({
+          paymentId,
+          createdAt: completedAt,
+          intent: preparation.intent,
+          intentDigest: preparation.intentDigest,
+          state: "VALIDATED",
+          decision: preparation.receipt.signedDecision,
+          checks: preparation.receipt.evaluation.checks,
+          auditEventId: preparation.receipt.auditEvent.eventId,
+          transactionHash: validated.transactionHash,
+          receiptId: issued.document.receipt.receiptId,
+          receiptHash: issued.document.receipt.receiptHash,
+          ...(issued.link ? { receiptLinkDigest: issued.link.linkDigest } : {}),
+          display: { instruction: preparation.instruction, payeeName: preparation.payeeName, allocationName: preparation.allocationName },
+        });
+        payments = [payment, ...payments];
+        await savePayments(paymentStore, payments);
+        agentPreparations.delete(body.authorizationId);
+        return json(response, 201, { payment, message: `${preparation.payeeName} was paid ${preparation.intent.amount} XRP. XRPL validated the transaction in ledger ${validated.ledgerIndex}.` });
       }
       if (request.method === "POST" && url.pathname === "/api/voice/instructions") {
         const body = parseVoicePreparation(await requestJson(request));
@@ -457,6 +604,140 @@ function activePolicy() {
   return { policyVersion, organizationId, status: "published" as const, effectiveFrom: "2026-01-01T00:00:00.000Z", allowedPurposeCodes: ["operations-supplies"], allowedAssets: ["XRP"], maxPaymentAmount: "5000", reserveFloor: "1000", requiredEvidenceByPurpose: { "operations-supplies": ["invoice"] }, approvalRules: [], beneficiaryChangeCoolingPeriodHours: 24, velocity: { maxPaymentCount24Hours: 10, maxPaymentAmount24Hours: "10000" }, risk: { reviewAtScore: 60, denyAtScore: 85 }, decisionTtlSeconds: 300 };
 }
 
+function workspacePaymentPolicy() {
+  return {
+    policyVersion: "policy_workspace_testnet_2026",
+    organizationId,
+    status: "published" as const,
+    effectiveFrom: "2026-01-01T00:00:00.000Z",
+    allowedPurposeCodes: ["workspace-payment"],
+    allowedAssets: ["XRP"],
+    maxPaymentAmount: "5000",
+    reserveFloor: "1",
+    requiredEvidenceByPurpose: {},
+    approvalRules: [],
+    beneficiaryChangeCoolingPeriodHours: 0,
+    velocity: { maxPaymentCount24Hours: 20, maxPaymentAmount24Hours: "20000" },
+    risk: { reviewAtScore: 60, denyAtScore: 85 },
+    decisionTtlSeconds: 300,
+  };
+}
+
+function workspaceEvaluationContext(intent: PaymentIntent, validatedBalance: string, beneficiaryCreatedAt: string) {
+  return {
+    now: now(),
+    availableTreasuryBalance: validatedBalance,
+    availableAllocationBalance: validatedBalance,
+    beneficiary: { beneficiaryId: intent.beneficiaryId, walletVersion: 1, status: "approved" as const, lastWalletChangeAt: validTimestamp(beneficiaryCreatedAt) ? beneficiaryCreatedAt : "2026-01-01T00:00:00.000Z" },
+    evidence: { manifestHash: intent.evidenceManifestHash, evidenceTypes: [], duplicateStatus: "clear" as const, procurementStatus: "verified" as const, integrityStatus: "verified" as const },
+    approvals: [],
+    recentPayments: [],
+    seenIntentDigests: [],
+    riskScore: 12,
+    securityDependencies: { policyStore: "available" as const, beneficiaryRegistry: "available" as const, evidenceStore: "available" as const, riskEngine: "available" as const },
+  };
+}
+
+function parseAgentPaymentRequest(value: unknown): AgentPaymentRequest {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError("Agent payment instruction is required.");
+  const record = value as Record<string, unknown>;
+  if (Object.keys(record).some((key) => !["message", "sourceAccount", "registry"].includes(key)) || typeof record.message !== "string" || typeof record.sourceAccount !== "string" || !record.registry || typeof record.registry !== "object" || Array.isArray(record.registry)) throw new TypeError("Agent payment instruction is invalid.");
+  const message = record.message.trim().replace(/\s+/g, " ");
+  if (!message || message.length > 500) throw new TypeError("Agent instruction must be between 1 and 500 characters.");
+  if (!isValidClassicAddress(record.sourceAccount)) throw new TypeError("Connect a valid XRPL Testnet allocation wallet before asking Alloc-X to pay.");
+  const registry = record.registry as Record<string, unknown>;
+  if (Object.keys(registry).some((key) => !["allocations", "payees"].includes(key)) || !Array.isArray(registry.allocations) || !Array.isArray(registry.payees) || registry.allocations.length > 100 || registry.payees.length > 250) throw new TypeError("Workspace payment registry is invalid.");
+  const allocations = registry.allocations.map(parseWorkspaceAllocation);
+  const payees = registry.payees.map(parseWorkspacePayee);
+  if (!allocations.length) throw new TypeError("Create and connect at least one allocation wallet before asking Alloc-X to pay.");
+  if (!payees.length) throw new TypeError("Register the intended payee before asking Alloc-X to pay.");
+  return { message, sourceAccount: record.sourceAccount, registry: { allocations, payees } };
+}
+
+function parseWorkspaceAllocation(value: unknown): WorkspaceAllocationInput {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError("Workspace allocation is invalid.");
+  const record = value as Record<string, unknown>;
+  const allocationId = boundedText(record.allocationId, 100, "Allocation identifier");
+  const name = boundedText(record.name, 80, "Allocation name");
+  const walletAddress = typeof record.walletAddress === "string" ? record.walletAddress.trim() : "";
+  if (walletAddress && !isValidClassicAddress(walletAddress)) throw new TypeError(`${name} has an invalid XRPL address.`);
+  return { allocationId, name, category: optionalText(record.category, 60), purpose: optionalText(record.purpose, 240), spendingRule: optionalText(record.spendingRule, 240), walletAddress };
+}
+
+function parseWorkspacePayee(value: unknown): WorkspacePayeeInput {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError("Workspace payee is invalid.");
+  const record = value as Record<string, unknown>;
+  const name = boundedText(record.name, 100, "Payee name");
+  const walletAddress = boundedText(record.walletAddress, 80, "Payee wallet");
+  if (!isValidClassicAddress(walletAddress)) throw new TypeError(`${name} has an invalid XRPL address.`);
+  const status = optionalText(record.status, 40);
+  if (status !== "ADDRESS_CHECKED") throw new TypeError(`${name}'s XRPL address must pass checksum validation before payment.`);
+  return { payeeId: boundedText(record.payeeId, 100, "Payee identifier"), name, type: optionalText(record.type, 20), role: optionalText(record.role, 120), walletAddress, status, createdAt: optionalText(record.createdAt, 40) };
+}
+
+function resolveAgentPayment(input: AgentPaymentRequest) {
+  const amountMatches = [...input.message.matchAll(/\b(\d+(?:\.\d{1,6})?)\s*xrp\b/giu)];
+  if (amountMatches.length !== 1) throw new TypeError("State one XRP amount, for example: pay Goodwill Clinic 200 XRP.");
+  const amount = amountMatches[0]![1]!;
+  const amountDrops = xrpToDrops(amount);
+  if (BigInt(amountDrops) <= 0n) throw new TypeError("Payment amount must be greater than zero.");
+  const normalized = normalizeWords(input.message);
+  const payeeMatches = input.registry.payees.filter((payee) => normalized.includes(normalizeWords(payee.name))).sort((left, right) => right.name.length - left.name.length);
+  if (!payeeMatches.length) throw new TypeError("Name one registered payee exactly as it appears in the Payees section.");
+  if (payeeMatches.length > 1 && payeeMatches[0]!.name.length === payeeMatches[1]!.name.length) throw new TypeError("The instruction matches more than one payee. Use the complete registered name.");
+  const payee = payeeMatches[0]!;
+  const linked = input.registry.allocations.filter((allocation) => allocation.walletAddress);
+  if (!linked.length) throw new TypeError("Connect an XRPL Testnet wallet to an allocation before asking Alloc-X to pay.");
+  const contextTokens = meaningfulTokens(`${input.message} ${payee.name} ${payee.role}`);
+  const ranked = linked.map((allocation) => ({ allocation, score: [...meaningfulTokens(`${allocation.name} ${allocation.category} ${allocation.purpose} ${allocation.spendingRule}`)].filter((token) => contextTokens.has(token)).length })).sort((left, right) => right.score - left.score || left.allocation.name.localeCompare(right.allocation.name));
+  const top = ranked[0]!;
+  const matchingSource = linked.filter((allocation) => allocation.walletAddress === input.sourceAccount);
+  let allocation: WorkspaceAllocationInput;
+  if (top.score > 0 && (ranked.length === 1 || top.score > ranked[1]!.score)) allocation = top.allocation;
+  else if (matchingSource.length === 1) allocation = matchingSource[0]!;
+  else throw new TypeError("Mention the allocation name or purpose so Alloc-X can select one funding source safely.");
+  if (allocation.walletAddress !== input.sourceAccount) throw new TypeError(`Alloc-X selected ${allocation.name}. Switch the connected wallet to ${compactAddress(allocation.walletAddress)} and confirm the instruction again.`);
+  if (payee.walletAddress === input.sourceAccount) throw new TypeError("The selected allocation wallet cannot pay itself.");
+  return {
+    amount,
+    amountDrops,
+    payee,
+    allocation,
+    beneficiaryId: stableIdentifier("ben", payee.payeeId),
+    allocationId: stableIdentifier("alloc", allocation.allocationId),
+  };
+}
+
+function parseAgentPaymentCompletion(value: unknown): { readonly authorizationId: string; readonly transactionHash: string; readonly authorization: { readonly token: string; readonly signature: string; readonly keyId: string } } {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError("Payment completion is required.");
+  const record = value as Record<string, unknown>;
+  if (Object.keys(record).some((key) => !["authorizationId", "transactionHash", "authorization"].includes(key)) || typeof record.authorizationId !== "string" || !/^authorization_[a-f0-9]{32}$/u.test(record.authorizationId) || typeof record.transactionHash !== "string" || !/^[A-F0-9]{64}$/u.test(record.transactionHash) || !record.authorization || typeof record.authorization !== "object" || Array.isArray(record.authorization)) throw new TypeError("Payment completion is invalid.");
+  const authorization = record.authorization as Record<string, unknown>;
+  if (Object.keys(authorization).some((key) => !["token", "signature", "keyId"].includes(key)) || typeof authorization.token !== "string" || authorization.token.length > 24_000 || typeof authorization.signature !== "string" || typeof authorization.keyId !== "string") throw new TypeError("Signed payment authorization is invalid.");
+  return { authorizationId: record.authorizationId, transactionHash: record.transactionHash, authorization: { token: authorization.token, signature: authorization.signature, keyId: authorization.keyId } };
+}
+
+function restoreAgentPreparation(authorization: { readonly token: string; readonly signature: string; readonly keyId: string }, verifier: { readonly keyId: string; verify(payload: string, signature: string): boolean }): AgentPaymentPreparation {
+  if (authorization.keyId !== verifier.keyId || !verifier.verify(authorization.token, authorization.signature)) throw new TypeError("Payment authorization signature is invalid.");
+  let decoded: unknown;
+  try { decoded = JSON.parse(Buffer.from(authorization.token, "base64url").toString("utf8")); }
+  catch { throw new TypeError("Payment authorization payload is invalid."); }
+  if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) throw new TypeError("Payment authorization payload is invalid.");
+  const preparation = decoded as AgentPaymentPreparation;
+  if (!/^authorization_[a-f0-9]{32}$/u.test(preparation.authorizationId) || typeof preparation.instruction !== "string" || typeof preparation.payeeName !== "string" || typeof preparation.allocationName !== "string" || !validTimestamp(preparation.expiresAt) || Date.parse(preparation.expiresAt) <= Date.now()) throw new TypeError("Payment authorization expired or is invalid. Ask Alloc-X to prepare the payment again.");
+  const intent = parsePaymentIntent(preparation.intent);
+  if (paymentIntentDigest(intent) !== preparation.intentDigest || !preparation.prepared || preparation.prepared.intentId !== intent.intentId || preparation.prepared.intentDigest !== preparation.intentDigest || !preparation.prepared.transaction || typeof preparation.prepared.transaction !== "object" || !preparation.receipt?.signedDecision) throw new TypeError("Payment authorization is not bound to a valid payment intent.");
+  return Object.freeze({ ...preparation, intent });
+}
+
+function stableIdentifier(prefix: "ben" | "alloc", value: string): string { return `${prefix}_${sha256Digest({ value } as CanonicalValue).slice(7, 31)}`; }
+function boundedText(value: unknown, maximum: number, label: string): string { if (typeof value !== "string" || !value.trim() || value.trim().length > maximum) throw new TypeError(`${label} is invalid.`); return value.trim().replace(/\s+/g, " "); }
+function optionalText(value: unknown, maximum: number): string { return typeof value === "string" ? value.trim().replace(/\s+/g, " ").slice(0, maximum) : ""; }
+function normalizeWords(value: string): string { return ` ${value.toLocaleLowerCase().replace(/[^a-z0-9]+/gu, " ").trim()} `; }
+function meaningfulTokens(value: string): Set<string> { const ignored = new Set(["alloc", "allocation", "grant", "payment", "pay", "send", "from", "with", "only", "approved", "supplier", "suppliers", "wallet", "xrp", "now", "and", "the", "for"]); return new Set(normalizeWords(value).trim().split(/\s+/u).filter((word) => word.length >= 4 && !ignored.has(word))); }
+function compactAddress(value: string): string { return value.length > 16 ? `${value.slice(0, 8)}…${value.slice(-6)}` : value; }
+function validTimestamp(value: string): boolean { return /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/u.test(value) && Number.isFinite(Date.parse(value)); }
+
 function evaluationContext(intent: PaymentIntentRecord["intent"], accounting: InMemoryTreasuryAccounting, registry: InMemoryBeneficiaryRegistry) {
   const highReviewRisk = intent.sourceObligationId === "obl_last_mile_logistics";
   const profile = registry.securityProfile(organizationId, intent.beneficiaryId);
@@ -610,9 +891,37 @@ async function readTestnetAccount(address: string): Promise<TestnetAccountSnapsh
   });
 }
 
+async function readValidatedTestnetPayment(transactionHash: string): Promise<ValidatedTestnetPayment> {
+  const deadline = Date.now() + 35_000;
+  while (Date.now() < deadline) {
+    const response = await fetch(testnetJsonRpcEndpoint, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ method: "tx", params: [{ transaction: transactionHash, binary: false }] }),
+      signal: AbortSignal.timeout(9_000),
+    });
+    if (!response.ok) throw new Error("XRPL Testnet transaction lookup failed.");
+    const payload = await response.json() as { result?: Record<string, unknown> };
+    const result = payload.result;
+    if (result?.validated === true) {
+      const transaction = (result.tx_json && typeof result.tx_json === "object" ? result.tx_json : result) as Record<string, unknown>;
+      const meta = result.meta as Record<string, unknown> | undefined;
+      if (meta?.TransactionResult !== "tesSUCCESS") throw new TypeError(`XRPL validated the transaction with ${String(meta?.TransactionResult ?? "an unknown result")}.`);
+      const account = transaction.Account;
+      const destination = transaction.Destination;
+      const amountDrops = transaction.Amount;
+      const ledgerIndex = result.ledger_index;
+      if (typeof account !== "string" || typeof destination !== "string" || typeof amountDrops !== "string" || !Number.isSafeInteger(ledgerIndex)) throw new Error("XRPL returned incomplete validated payment data.");
+      return { transactionHash, account, destination, amountDrops, ledgerIndex: ledgerIndex as number, validatedAt: now(), resultCode: "tesSUCCESS" };
+    }
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 1_500));
+  }
+  throw new TypeError("XRPL did not validate the transaction before the confirmation deadline. Use the transaction hash to verify it before retrying.");
+}
+
 function json(response: ServerResponse, status: number, body: unknown): void { response.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff" }); response.end(JSON.stringify(body)); }
 function now(): string { return new Date().toISOString(); }
-function isClientError(message: string): boolean { return /required|invalid|unsupported|not found|eligible|active|capacity|live|selection|authenticated|must|frozen|pending|independent|escalation|awaiting|transcript changed|already been confirmed|no longer current/i.test(message); }
+function isClientError(message: string): boolean { return /required|invalid|unsupported|not found|eligible|active|capacity|balance|live|selection|authenticated|must|frozen|pending|independent|escalation|awaiting|expired|wallet|payee|allocation|instruction|Approval Layer|transcript changed|already been confirmed|no longer current/i.test(message); }
 
 if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {
   const server = await createConsoleServer();

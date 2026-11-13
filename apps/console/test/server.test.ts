@@ -16,7 +16,7 @@ test("console exposes server-owned payment references and records a signed decis
   const baseUrl = `http://127.0.0.1:${address.port}`;
   try {
     const bootstrap = await (await fetch(`${baseUrl}/api/bootstrap`)).json() as { paymentReferences: { obligations: readonly { obligationId: string; beneficiaryId: string }[]; allocations: readonly { allocationId: string }[] }; capabilities: { canSettle: boolean }; cashForecast: { assumptions: readonly string[]; scenarios: readonly { scenario: string; endingSpendable: string }[] }; operations: { health: string; metrics: readonly unknown[]; alerts: readonly unknown[] }; mainnetActivation: { phase: string; allowed: boolean; blockers: readonly string[] }; offlineTrust: { status: string; synchronizationAllowed: boolean; pendingOperations: number }; offlineWorkflows: { connectivity: string; preparedPayments: number; capability: string }; offlineSynchronization: { status: string; serverOrderedOperations: number; openConflicts: number }; offlineRevalidation: { status: string; signingEligible: number }; organizationCapabilities: { organizationType: string; policyPack: string; status: string }; commercialPolicyPack: { status: string; departmentBudgets: number }; nonprofitPolicyPack: { status: string; programAllocations: number }; publicSectorPolicyPack: { status: string; appropriations: number } };
-    assert.equal(bootstrap.capabilities.canSettle, false);
+    assert.equal(bootstrap.capabilities.canSettle, true);
     assert.equal(bootstrap.paymentReferences.obligations.length, 2);
     assert.equal(bootstrap.cashForecast.scenarios.length, 3);
     assert.equal(bootstrap.cashForecast.scenarios[1]!.scenario, "expected");
@@ -216,6 +216,55 @@ test("console requires a reviewed voice transcript before it reaches the bounded
     assert.equal(body.instruction.state, "CONFIRMED");
     assert.equal(body.session.state, "DRAFTED");
     assert.ok(body.session.draftIntentId);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await rm(runtimeDirectory, { recursive: true, force: true });
+  }
+});
+
+test("agent prepares an approved registered payment and records only the matching validated XRPL transaction", async () => {
+  const runtimeDirectory = await mkdtemp(join(tmpdir(), "alloc-x-console-"));
+  const source = "rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh";
+  const destination = "r3kmLJN5D28dHuH8vZNUZpMC43pEHpaocV";
+  const transactionHash = "A".repeat(64);
+  const server = await createConsoleServer({
+    runtimeDirectory,
+    testnetAccountReader: async (account) => ({ account, balanceDrops: "1000000000", balanceXrp: "1000", ledgerIndex: 987654, observedAt: "2026-11-13T16:00:00.000Z" }),
+    agentPaymentAdapter: {
+      prepareNativePayment: async (input) => ({ network: "testnet", networkId: 1, intentId: input.intentId, intentDigest: input.intentDigest, organizationId: input.organizationId, transaction: { TransactionType: "Payment", Account: input.account, Destination: input.destination, Amount: "20000000", Fee: "12", Sequence: 1, LastLedgerSequence: 987674 }, serializedTransaction: "ABCD", preparedAtLedgerIndex: 987654 }),
+    },
+    testnetTransactionReader: async (hash) => ({ transactionHash: hash, account: source, destination, amountDrops: "20000000", ledgerIndex: 987655, validatedAt: "2026-11-13T16:00:05.000Z", resultCode: "tesSUCCESS" }),
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  try {
+    const preparedResponse = await fetch(`${baseUrl}/api/agent/payments/prepare`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        message: "Goodwill clinic and pharmacy 20 XRP now",
+        sourceAccount: source,
+        registry: {
+          allocations: [{ allocationId: "allocation_health", name: "Healthcare Grant", category: "Program allocation", purpose: "Medical supplies and pharmacy", spendingRule: "Healthcare only", walletAddress: source }],
+          payees: [{ payeeId: "payee_goodwill", name: "Goodwill clinic and pharmacy", type: "SUPPLIER", role: "Medical supplier", walletAddress: destination, status: "ADDRESS_CHECKED", createdAt: "2026-11-01T00:00:00.000Z" }],
+        },
+      }),
+    });
+    assert.equal(preparedResponse.status, 201, JSON.stringify(await preparedResponse.clone().json()));
+    const prepared = await preparedResponse.json() as { authorizationId: string; authorization: { token: string; signature: string; keyId: string }; transaction: { Account: string; Destination: string; Amount: string }; approval: { decision: { outcome: string } } };
+    assert.equal(prepared.approval.decision.outcome, "ALLOW");
+    assert.deepEqual({ Account: prepared.transaction.Account, Destination: prepared.transaction.Destination, Amount: prepared.transaction.Amount }, { Account: source, Destination: destination, Amount: "20000000" });
+
+    const completedResponse = await fetch(`${baseUrl}/api/agent/payments/complete`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ authorizationId: prepared.authorizationId, authorization: prepared.authorization, transactionHash }) });
+    assert.equal(completedResponse.status, 201, JSON.stringify(await completedResponse.clone().json()));
+    const completed = await completedResponse.json() as { payment: { state: string; transactionHash: string; display: { payeeName: string; allocationName: string } } };
+    assert.equal(completed.payment.state, "VALIDATED");
+    assert.equal(completed.payment.transactionHash, transactionHash);
+    assert.deepEqual(completed.payment.display, { instruction: "Goodwill clinic and pharmacy 20 XRP now", payeeName: "Goodwill clinic and pharmacy", allocationName: "Healthcare Grant" });
+    const listed = await (await fetch(`${baseUrl}/api/payments`)).json() as { payments: readonly { transactionHash?: string }[] };
+    assert.equal(listed.payments[0]?.transactionHash, transactionHash);
   } finally {
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     await rm(runtimeDirectory, { recursive: true, force: true });
