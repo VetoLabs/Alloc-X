@@ -94,7 +94,12 @@ test("console exposes server-owned payment references and records a signed decis
     assert.match(appScript, /Add payee/);
     assert.match(appScript, /class="registry-form-body"/);
     assert.match(appScript, />Create allocation</);
-    assert.match(appScript, /Enable agent signing/);
+    assert.match(appScript, /Enable signing/);
+    assert.match(appScript, /Replace signer/);
+    assert.match(appScript, /registry-signer-action/);
+    assert.match(appScript, /registry-actions-tools/);
+    assert.doesNotMatch(appScript, />Enable agent signing<\/button>/);
+    assert.match(appScript, /function enableAllocationSigner\(allocationId\)/);
     assert.match(appScript, /signedTransactionBlob/);
     assert.match(appScript, /data-wallet-id="gemwallet"/);
     assert.match(appScript, /data-wallet-id="crossmark"/);
@@ -120,6 +125,8 @@ test("console exposes server-owned payment references and records a signed decis
     assert.match(stylesheet, /\.shell\.nav-open \.sidebar/);
     assert.ok(stylesheet.includes(".voice-live-transcript"));
     assert.ok(stylesheet.includes(".wallet-picker-option"));
+    assert.ok(stylesheet.includes(".registry-card .registry-signer-action"));
+    assert.ok(stylesheet.includes(".registry-actions-tools"));
     assert.ok(stylesheet.includes(".wallet-picker-backdrop"));
     assert.ok(stylesheet.includes("/* Audit navigation scroll containment"));
     assert.ok(stylesheet.includes("overscroll-behavior-y: contain"));
