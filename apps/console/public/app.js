@@ -236,6 +236,10 @@ function logo() {
 function esc(value) { return String(value ?? '').replace(/[&<>'"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[character]); }
 function money(value) { return `${Number(value).toLocaleString(undefined, { maximumFractionDigits: 2 })} XRP`; }
 function compact(value) { return `${String(value).slice(0, 14)}…${String(value).slice(-8)}`; }
+function walletIdentityLabel() {
+  const address = state.wallet.account || operatorAccount()?.address;
+  return address ? String(address).slice(0, 8) : 'Main wallet';
+}
 function when(value) { return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)); }
 function outcomeClass(outcome) { return outcome === 'ALLOW' ? 'allow' : outcome === 'REVIEW' ? 'review' : 'block'; }
 function status(outcome, label = outcome) { return `<span class="status ${outcomeClass(outcome)}">${esc(label)}</span>`; }
@@ -281,11 +285,11 @@ function render() {
       <nav class="nav">${nav(['overview', 'allocations', 'beneficiaries', 'payments', 'new-payment', 'agent', 'forecast', 'schedule'])}</nav>
       <div class="nav-label">Assurance</div>
       <nav class="nav">${nav(['security', 'audit', 'operations', 'activation', 'offline-trust', 'offline-sync', 'offline-revalidation', 'organization-capabilities', 'commercial-controls', 'nonprofit-controls', 'public-sector-controls'])}</nav>
-      <div class="sidebar-bottom"><div class="secure-state"><i class="secure-dot"></i>${esc(data.organization.environment)}</div><div class="identity"><span class="avatar">TO</span><span><strong>${esc(data.operator.name)}</strong><span>${esc(data.operator.role)}</span></span></div></div>
+      <div class="sidebar-bottom"><div class="secure-state"><i class="secure-dot"></i>${esc(data.organization.environment)}</div><div class="identity"><span class="avatar">XR</span><span><strong>${esc(walletIdentityLabel())}</strong><span>Main wallet</span></span></div></div>
     </aside>
     <button class="nav-scrim" type="button" data-action="mobile-menu" aria-label="Close navigation menu"></button>
     <section class="workspace">
-      <header class="topbar"><div class="crumb"><span>${esc(data.organization.displayName)}</span><span>›</span><strong>${esc(routes[state.route]?.label || 'Payment details')}</strong></div><div class="topbar-spacer"></div>${walletControl()}<button class="wallet-launch" type="button" data-action="wallet-connect">${state.wallet.account ? 'Switch wallet' : 'Connect XRPL wallet'}</button><span class="env-badge"><i></i>XRPL Testnet</span><button class="icon-button" aria-label="Refresh workspace" data-action="reload">${svg('refresh')}</button><button class="icon-button" aria-label="Notifications">${svg('bell')}</button></header>
+      <header class="topbar"><div class="crumb"><span>${esc(walletIdentityLabel())}</span><span>›</span><strong>${esc(routes[state.route]?.label || 'Payment details')}</strong></div><div class="topbar-spacer"></div>${walletControl()}<button class="wallet-launch" type="button" data-action="wallet-connect">${state.wallet.account ? 'Switch wallet' : 'Connect XRPL wallet'}</button><span class="env-badge"><i></i>XRPL Testnet</span><button class="icon-button" aria-label="Refresh workspace" data-action="reload">${svg('refresh')}</button><button class="icon-button" aria-label="Notifications">${svg('bell')}</button></header>
       <main class="page" id="main-content">${page()}</main>
     </section>
     ${walletPicker()}

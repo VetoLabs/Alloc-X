@@ -164,8 +164,8 @@ export async function createConsoleServer(options: ConsoleServerOptions = {}): P
         const integrity = await journal.verifyIntegrity();
         recordOperationalSnapshot(operationalMonitor, payments, options.settlement !== undefined);
         return json(response, 200, {
-          organization: { id: organizationId, displayName: "Meridian Health Trust", environment: "Local secure workspace" },
-          operator: { name: "Demo operator", role: "Treasury workspace" },
+          organization: { id: organizationId, displayName: "XRPL Wallet Workspace", environment: "Local secure workspace" },
+          operator: { name: "Main wallet", role: "Operator wallet" },
           treasury: accounting.treasurySnapshot(organizationId, "XRP"),
           cashForecast: cashForecast(accounting),
           paymentSchedule: paymentSchedule(accounting),
@@ -365,7 +365,7 @@ function seedDomain(intents: InMemoryPaymentIntentService, accounting: InMemoryT
   const seededAt = "2026-11-07T10:00:00.000Z";
   accounting.createTreasuryAccount({ organizationId, asset: "XRP", openingAmount: "12000" }, seededAt);
   for (const allocation of allocations()) accounting.registerAllocation(allocation, seededAt);
-  intents.registerOrganization({ contractVersion: "1.0", organizationId, displayName: "Meridian Health Trust", status: "active", createdAt: "2026-01-01T00:00:00.000Z" });
+  intents.registerOrganization({ contractVersion: "1.0", organizationId, displayName: "XRPL Wallet Workspace", status: "active", createdAt: "2026-01-01T00:00:00.000Z" });
   intents.registerPrincipal({ contractVersion: "1.0", principalId: "principal_allocation_agent", organizationId, kind: "agent", status: "active", roles: ["allocation-agent"], createdAt: "2026-01-01T00:00:00.000Z" });
   for (const allocation of allocations()) intents.registerAllocation(allocation);
   for (const beneficiary of beneficiaries()) {

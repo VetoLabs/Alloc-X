@@ -99,6 +99,7 @@ test("console exposes server-owned payment references and records a signed decis
     assert.doesNotMatch(appScript, /MetaMaskSnapAdapter|metamask-snap/);
     assert.doesNotMatch(appScript, /xrpl-wallet-connector/);
     assert.doesNotMatch(appScript, /Good morning, Ada/);
+    assert.doesNotMatch(appScript, /Meridian Health Trust|Demo operator/);
     assert.ok(appScript.includes("Welcome to Alloc-X."));
     assert.match(appScript, /recognition\.continuous = true/);
     assert.match(appScript, /startVoiceSegment\(session\)/);
