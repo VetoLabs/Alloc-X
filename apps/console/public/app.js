@@ -1,4 +1,5 @@
 import { addAllocation, addPayee, assignAllocationWallet, isClassicAddress, readWorkspaceRegistry, removeAllocation, removePayee, writeWorkspaceRegistry } from './workspace-registry.js';
+import { readOperatorWallet, rememberOperatorWallet, forgetOperatorWallet } from './wallet-session.js';
 
 const icons = {
   grid: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
@@ -48,6 +49,8 @@ const routes = {
 
 const app = document.querySelector('#app');
 let walletManager;
+let operatorSessionEpoch = 0;
+let operatorRestoreAttempted = false;
 
 function initializeWalletConnection() {
   const sdk = globalThis.XRPLConnect;
@@ -59,10 +62,65 @@ function initializeWalletConnection() {
   walletManager.on('connect', (account) => walletConnected(account));
   walletManager.on('accountChanged', (account) => walletConnected(account));
   walletManager.on('networkChanged', () => refreshWalletBalance());
-  walletManager.on('disconnect', () => { state.wallet = { status: 'DISCONNECTED', account: null, name: null, balance: null, error: null }; if (state.data) render(); });
+  walletManager.on('disconnect', () => {
+    // SDK disconnect events can occur during refresh. Only explicit Disconnect clears the preference.
+    state.wallet = { status: 'DISCONNECTED', account: null, name: null, balance: null, error: null };
+    if (state.data) render();
+  });
+}
+
+function detectCurrentOperatorWalletId() {
+  const label = String(walletManager?.wallet?.id || walletManager?.wallet?.name || '').toLowerCase();
+  if (label.includes('gem')) return 'gemwallet';
+  if (label.includes('crossmark')) return 'crossmark';
+  return readOperatorWallet()?.walletId || null;
+}
+
+async function restoreOperatorWallet() {
+  if (operatorRestoreAttempted) return;
+  operatorRestoreAttempted = true;
+  const remembered = readOperatorWallet();
+  if (!remembered || state.wallet.status === 'CONNECTED') return;
+
+  const epoch = operatorSessionEpoch;
+  state.wallet = { status: 'RESTORING', account: null, name: remembered.walletId === 'gemwallet' ? 'GemWallet' : 'Crossmark', balance: null, error: null };
+  if (state.data) render();
+
+  try {
+    // XRPL Connect normally restores its own stored sessions. A direct GemWallet connection
+    // bypasses its store, so independently check GemWallet's current account and network.
+    if (remembered.walletId === 'gemwallet') {
+      const gem = globalThis.XRPLConnect?.GemWalletAPI;
+      if (!gem?.getAddress || !gem?.getNetwork) throw new Error('GemWallet is unavailable.');
+      const installed = await gem.isInstalled?.();
+      if (installed?.result?.isInstalled === false) throw new Error('GemWallet is not installed.');
+      const [addressResponse, networkResponse] = await Promise.all([gem.getAddress(), gem.getNetwork()]);
+      const address = addressResponse?.result?.address || addressResponse?.address;
+      const network = String(networkResponse?.result?.network || networkResponse?.network || '').toLowerCase();
+      if (!isClassicAddress(address) || network !== 'testnet') throw new Error('Unlock GemWallet and select XRPL Testnet.');
+      if (epoch !== operatorSessionEpoch) return;
+      rememberOperatorWallet('gemwallet', address);
+      state.wallet = { status: 'VERIFYING', account: address, name: 'GemWallet', network: 'testnet', balance: null, error: null };
+      if (state.data) render();
+      await refreshWalletBalance();
+    } else {
+      // A saved public address alone never proves there is an active wallet connection.
+      const account = walletManager?.account || await walletManager?.reconnect?.();
+      if (!account?.address || account.network?.id !== 'testnet') throw new Error('Reconnect Crossmark on XRPL Testnet.');
+      if (epoch !== operatorSessionEpoch) return;
+      await walletConnected(account);
+    }
+  } catch (error) {
+    if (epoch !== operatorSessionEpoch || state.wallet.status === 'CONNECTED') return;
+    state.wallet = { status: 'RECONNECT_REQUIRED', account: null, name: remembered.walletId === 'gemwallet' ? 'GemWallet' : 'Crossmark', balance: null, error: error.message };
+    if (state.data) render();
+  }
 }
 
 async function walletConnected(account) {
+  if (!account?.address) return;
+  const walletId = detectCurrentOperatorWalletId();
+  if (walletId && account.network?.id === 'testnet') rememberOperatorWallet(walletId, account.address);
   state.walletPickerOpen = false;
   state.walletInstallProvider = null;
   state.wallet = { status: 'VERIFYING', account: account.address, name: walletManager?.wallet?.name || 'XRPL wallet', balance: null, error: null };
@@ -127,6 +185,7 @@ async function connectGemWalletDirect() {
   if (!isClassicAddress(address)) throw new Error('GemWallet did not return a valid XRPL account. Unlock the extension and try again.');
   if (network !== 'testnet') throw new Error(`GemWallet is on ${rawNetwork || 'an unknown network'}. Select Testnet and try again.`);
   state.walletPickerOpen = false;
+  rememberOperatorWallet('gemwallet', address);
   state.wallet = { status: 'VERIFYING', account: address, name: 'GemWallet', network: 'testnet', balance: null, error: null };
   completePendingAllocationWallet(address);
   render();
@@ -152,6 +211,7 @@ async function load() {
     state.data = await api('/api/bootstrap');
     render();
     refreshAllocationBalances();
+    void restoreOperatorWallet();
   } catch (error) {
     app.innerHTML = `<main class="loading"><div><strong>Unable to open Alloc-X.</strong><p>${esc(error.message)}</p>${button('Try again', 'reload', 'primary')}</div></main>`;
     bind();
@@ -202,6 +262,8 @@ function render() {
 function walletControl() {
   const wallet = state.wallet;
   if (wallet.status === 'CONNECTED') return `<div class="wallet-control"><button class="wallet-status" type="button" data-action="wallet-refresh" title="Refresh validated Testnet balance"><i></i><span><strong>${esc(wallet.name)}</strong><small>${esc(compact(wallet.account))}</small></span></button><button class="wallet-disconnect" type="button" data-action="wallet-disconnect">Disconnect</button></div>`;
+  if (wallet.status === 'RESTORING') return '<button class="wallet-status checking" type="button" disabled><span class="loader"></span><span><strong>Reconnecting ' + esc(wallet.name || 'wallet') + '</strong><small>Checking XRPL Testnet</small></span></button>';
+  if (wallet.status === 'RECONNECT_REQUIRED') return '<button class="wallet-status checking" type="button" data-action="wallet-connect"><span>' + svg('wallet') + '</span><span><strong>Reconnect ' + esc(wallet.name || 'wallet') + '</strong><small>Connection needs refreshing</small></span></button>';
   if (wallet.status === 'VERIFYING') return `<button class="wallet-status checking" type="button" disabled><span class="loader"></span><span><strong>Verifying Testnet wallet</strong><small>${esc(wallet.account ? compact(wallet.account) : 'Reading validated ledger')}</small></span></button>`;
   if (['ERROR', 'UNSUPPORTED', 'BALANCE_UNAVAILABLE'].includes(wallet.status)) return `<button class="wallet-status checking" type="button" data-action="wallet-refresh" title="${esc(wallet.error || 'Balance not yet available')}"><span>${svg('wallet')}</span><span><strong>${wallet.status === 'UNSUPPORTED' ? 'Select XRPL Testnet' : 'Wallet connected'}</strong><small>${esc(wallet.account ? compact(wallet.account) : 'No account selected')}</small></span></button>`;
   return '';
@@ -409,6 +471,7 @@ function bind() {
 
 async function connectXrplWallet(walletId) {
   if (!['gemwallet', 'crossmark'].includes(walletId) || state.walletConnecting) return;
+  operatorSessionEpoch += 1;
   if (!walletManager) return toast('Wallet connection unavailable', 'XRPL Connect is not available in this browser.', true);
   state.walletConnecting = walletId;
   state.walletInstallProvider = null;
@@ -416,7 +479,11 @@ async function connectXrplWallet(walletId) {
   try {
     const account = await walletManager.connect(walletId);
     if (!account?.address) throw new Error('The wallet did not return an XRPL account.');
+    if (account.network?.id && account.network.id !== 'testnet') throw new Error('Select XRPL Testnet before connecting.');
+    rememberOperatorWallet(walletId, account.address);
     state.walletPickerOpen = false;
+    // XRPL Connect may complete without firing its connect event on some adapters.
+    if (state.wallet.account !== account.address) await walletConnected(account);
   } catch (error) {
     const code = String(error?.code || '');
     const message = String(error?.message || 'Could not connect to this XRPL wallet.');
@@ -447,6 +514,8 @@ async function onAction(event) {
   if (action === 'mobile-menu') { state.mobileMenuOpen = !state.mobileMenuOpen; render(); return; }
   if (action === 'wallet-connect') { state.walletPickerOpen = true; state.walletInstallProvider = null; render(); return; }
   if (action === 'wallet-disconnect') {
+    operatorSessionEpoch += 1;
+    forgetOperatorWallet();
     try { await walletManager?.disconnect(); } catch (error) { toast('Wallet disconnect failed', error.message, true); }
     state.wallet = { status: 'DISCONNECTED', account: null, name: null, balance: null, error: null };
     render();
