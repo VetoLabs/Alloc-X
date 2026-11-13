@@ -1,0 +1,4 @@
+# Local browser profiles used only for visual verification.
+.chrome-cdp/
+.chrome-qa/
+.edge-qa/

@@ -1,5 +1,11 @@
 # Alloc-X
 
+## Live workspace
+
+**[Open Alloc-X on Vercel →](https://alloc-x.vercel.app)**
+
+Use the live workspace to create named allocations, register payees, connect supported XRPL Testnet wallets, and inspect the protected payment workflow.
+
 **Policy-bound treasury intelligence for Africa.**  
 **Allocate. Protect. Settle. Prove.**
 
