@@ -94,6 +94,7 @@ test("console exposes server-owned payment references and records a signed decis
     assert.match(appScript, /Add payee/);
     assert.match(appScript, /class="registry-form-body"/);
     assert.match(appScript, />Create allocation</);
+    assert.match(appScript, /\['CONNECTED', 'BALANCE_UNAVAILABLE'\]\.includes\(state\.wallet\.status\)/);
     assert.match(appScript, /data-wallet-id="gemwallet"/);
     assert.match(appScript, /data-wallet-id="crossmark"/);
     assert.doesNotMatch(appScript, /MetaMaskSnapAdapter|metamask-snap/);

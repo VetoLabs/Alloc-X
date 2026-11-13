@@ -693,7 +693,13 @@ async function submitAgentInstruction(event) {
 
 async function executeAgentPayment(message) {
   const account = operatorAccount();
-  if (!account?.address || state.wallet.status !== 'CONNECTED') throw new Error('Connect the XRPL Testnet wallet assigned to the intended allocation, then confirm the instruction again.');
+  // BALANCE_UNAVAILABLE still represents an authenticated Testnet wallet session.
+  // The server performs its own authoritative account/balance lookup before it
+  // prepares a transaction, so a transient dashboard balance-read failure must
+  // not prevent the wallet from authorizing an otherwise valid payment.
+  if (!account?.address || account.network?.id !== 'testnet' || !['CONNECTED', 'BALANCE_UNAVAILABLE'].includes(state.wallet.status)) {
+    throw new Error('Connect the XRPL Testnet wallet assigned to the intended allocation, then confirm the instruction again.');
+  }
   const prepared = await api('/api/agent/payments/prepare', {
     method: 'POST',
     body: JSON.stringify({ message, sourceAccount: account.address, registry: { allocations: state.registry.allocations, payees: state.registry.payees } }),
