@@ -429,7 +429,8 @@ function ledgerSourceWallets() {
   const sources = [];
   if (state.wallet.network === 'testnet' && state.wallet.account) sources.push({ address: state.wallet.account, name: 'Main wallet' });
   for (const allocation of state.registry.allocations) if (allocation.walletAddress) sources.push({ address: allocation.walletAddress, name: allocation.name });
-  return [...new Map(sources.map((source) => [source.address, source])).values()];
+  // The connected main-wallet label takes precedence when a wallet is also registered as an allocation.
+  return sources.filter((source, index) => sources.findIndex((candidate) => candidate.address === source.address) === index);
 }
 
 function ledgerHistoryRows() {
