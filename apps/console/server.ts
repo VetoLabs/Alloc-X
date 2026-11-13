@@ -323,6 +323,21 @@ export async function createConsoleServer(options: ConsoleServerOptions = {}): P
         const authorizationId = `authorization_${token}`;
         const preparation: AgentPaymentPreparation = Object.freeze({ authorizationId, instruction: body.message, payeeName: resolved.payee.name, allocationName: resolved.allocation.name, intent, intentDigest, prepared, receipt: approvalReceipt, expiresAt: intent.requestedExecutionWindow.expiresAt });
         agentPreparations.set(authorizationId, preparation);
+        // Persist approved, not-yet-settled agent instructions in the queue.
+        // They only become validated completions after an independent XRPL check.
+        const pendingPayment: PaymentView = Object.freeze({
+          paymentId: `pay_${intent.intentId.slice(3)}`,
+          createdAt: preparedAt,
+          intent,
+          intentDigest,
+          state: "AWAITING_SETTLEMENT",
+          decision: approvalReceipt.signedDecision,
+          checks: approvalReceipt.evaluation.checks,
+          auditEventId: approvalReceipt.auditEvent.eventId,
+          display: { instruction: body.message, payeeName: resolved.payee.name, allocationName: resolved.allocation.name },
+        });
+        payments = [pendingPayment, ...payments];
+        await savePayments(paymentStore, payments);
         const authorizationToken = Buffer.from(JSON.stringify(preparation)).toString("base64url");
         const authorization = { token: authorizationToken, signature: signer.sign(authorizationToken), keyId: signer.keyId };
         return json(response, 201, {
@@ -379,7 +394,7 @@ export async function createConsoleServer(options: ConsoleServerOptions = {}): P
           ...(issued.link ? { receiptLinkDigest: issued.link.linkDigest } : {}),
           display: { instruction: preparation.instruction, payeeName: preparation.payeeName, allocationName: preparation.allocationName },
         });
-        payments = [payment, ...payments];
+        payments = [payment, ...payments.filter((item) => item.paymentId !== paymentId)];
         await savePayments(paymentStore, payments);
         agentPreparations.delete(body.authorizationId);
         return json(response, 201, { payment, message: `${preparation.payeeName} was paid ${preparation.intent.amount} XRP. XRPL validated the transaction in ledger ${validated.ledgerIndex}.` });
