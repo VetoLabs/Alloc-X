@@ -3,7 +3,6 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { decode as decodeXrplTransaction } from "ripple-binary-codec";
 
 import { InMemoryTreasuryAccounting } from "../../packages/accounting/src/index.ts";
 import { InMemoryAuditChain } from "../../packages/audit-chain/src/index.ts";
@@ -89,7 +88,6 @@ export interface ConsoleServerOptions {
   readonly settlement?: { readonly path: AutonomousPaymentPath; readonly treasuryAccount: string; readonly workerId: string };
   readonly testnetAccountReader?: (address: string) => Promise<TestnetAccountSnapshot>;
   readonly agentPaymentAdapter?: { prepareNativePayment(input: { readonly intentId: string; readonly intentDigest: string; readonly organizationId: string; readonly account: string; readonly destination: string; readonly amountXrp: string; readonly mode: "sequence" }): Promise<PreparedAgentPayment> };
-  readonly testnetSignedSubmitter?: (signedTransactionBlob: string) => Promise<string>;
   readonly testnetTransactionReader?: (hash: string) => Promise<ValidatedTestnetPayment>;
   /** Local identity fixtures. Production adapters must derive these actors from an authenticated session. */
   readonly securityActors?: { readonly operator: ControlActor; readonly approver: ControlActor; readonly escalator: ControlActor };
@@ -341,8 +339,7 @@ export async function createConsoleServer(options: ConsoleServerOptions = {}): P
         const preparation = agentPreparations.get(body.authorizationId) ?? restoreAgentPreparation(body.authorization, verifier);
         if (preparation.authorizationId !== body.authorizationId) throw new TypeError("Payment authorization identifier does not match its signed execution record.");
         assertSettlementAuthorized({ signedDecision: preparation.receipt.signedDecision, organizationId, intent: preparation.intent, now: now(), verifier });
-        if (body.signedTransactionBlob) assertSignedTransactionMatches(preparation.prepared.transaction, body.signedTransactionBlob);
-        const transactionHash = body.signedTransactionBlob ? await (options.testnetSignedSubmitter ?? submitSignedTestnetPayment)(body.signedTransactionBlob) : body.transactionHash!;
+        const transactionHash = body.transactionHash;
         const existing = payments.find((payment) => payment.transactionHash === transactionHash);
         if (existing) return json(response, 200, { payment: existing, message: "The transaction was already validated and recorded." });
         const validated = await (options.testnetTransactionReader ?? readValidatedTestnetPayment)(transactionHash);
@@ -364,7 +361,7 @@ export async function createConsoleServer(options: ConsoleServerOptions = {}): P
           policyCitations: [{ clause: "Workspace Testnet payment policy", sourceHash: preparation.receipt.evaluation.policyDigest }],
           budgetMovement: { allocationId: preparation.intent.allocationId, amount: preparation.intent.amount, state: "VALIDATED" },
           securityDecision: { decisionDigest: preparation.receipt.signedDecision.decisionDigest, signature: preparation.receipt.signedDecision.signature, signerKeyId: preparation.receipt.signedDecision.keyId },
-          signerAttestations: [{ signerId: body.signedTransactionBlob ? "allocation-session-signer" : "connected-xrpl-wallet", status: "AUTHORIZED" }],
+          signerAttestations: [{ signerId: "allocation-session-signer", status: "AUTHORIZED" }],
           ledger: { network: "xrpl-testnet", ledgerIndex: validated.ledgerIndex, validatedAt: validated.validatedAt },
         });
         const payment: PaymentView = Object.freeze({
@@ -706,16 +703,13 @@ function resolveAgentPayment(input: AgentPaymentRequest) {
   };
 }
 
-function parseAgentPaymentCompletion(value: unknown): { readonly authorizationId: string; readonly transactionHash?: string; readonly signedTransactionBlob?: string; readonly authorization: { readonly token: string; readonly signature: string; readonly keyId: string } } {
+function parseAgentPaymentCompletion(value: unknown): { readonly authorizationId: string; readonly transactionHash: string; readonly authorization: { readonly token: string; readonly signature: string; readonly keyId: string } } {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError("Payment completion is required.");
   const record = value as Record<string, unknown>;
-  if (Object.keys(record).some((key) => !["authorizationId", "transactionHash", "signedTransactionBlob", "authorization"].includes(key)) || typeof record.authorizationId !== "string" || !/^authorization_[a-f0-9]{32}$/u.test(record.authorizationId) || !record.authorization || typeof record.authorization !== "object" || Array.isArray(record.authorization)) throw new TypeError("Payment completion is invalid.");
-  const transactionHash = typeof record.transactionHash === "string" && /^[A-F0-9]{64}$/u.test(record.transactionHash) ? record.transactionHash : undefined;
-  const signedTransactionBlob = typeof record.signedTransactionBlob === "string" && /^[A-F0-9]{128,32768}$/u.test(record.signedTransactionBlob) ? record.signedTransactionBlob : undefined;
-  if ((transactionHash ? 1 : 0) + (signedTransactionBlob ? 1 : 0) !== 1) throw new TypeError("Provide either one validated transaction hash or one signed XRPL transaction blob.");
+  if (Object.keys(record).some((key) => !["authorizationId", "transactionHash", "authorization"].includes(key)) || typeof record.authorizationId !== "string" || !/^authorization_[a-f0-9]{32}$/u.test(record.authorizationId) || typeof record.transactionHash !== "string" || !/^[A-F0-9]{64}$/u.test(record.transactionHash) || !record.authorization || typeof record.authorization !== "object" || Array.isArray(record.authorization)) throw new TypeError("Payment completion is invalid.");
   const authorization = record.authorization as Record<string, unknown>;
   if (Object.keys(authorization).some((key) => !["token", "signature", "keyId"].includes(key)) || typeof authorization.token !== "string" || authorization.token.length > 24_000 || typeof authorization.signature !== "string" || typeof authorization.keyId !== "string") throw new TypeError("Signed payment authorization is invalid.");
-  return { authorizationId: record.authorizationId, ...(transactionHash ? { transactionHash } : {}), ...(signedTransactionBlob ? { signedTransactionBlob } : {}), authorization: { token: authorization.token, signature: authorization.signature, keyId: authorization.keyId } };
+  return { authorizationId: record.authorizationId, transactionHash: record.transactionHash, authorization: { token: authorization.token, signature: authorization.signature, keyId: authorization.keyId } };
 }
 
 function restoreAgentPreparation(authorization: { readonly token: string; readonly signature: string; readonly keyId: string }, verifier: { readonly keyId: string; verify(payload: string, signature: string): boolean }): AgentPaymentPreparation {
@@ -918,26 +912,6 @@ async function xrplTestnetRpc(method: string, params: readonly unknown[]): Promi
   const payload = await response.json() as { result?: Record<string, unknown> };
   if (!payload.result || payload.result.status === "error" || typeof payload.result.error === "string") throw new Error(`XRPL Testnet rejected ${method}.`);
   return payload.result;
-}
-
-async function submitSignedTestnetPayment(signedTransactionBlob: string): Promise<string> {
-  const result = await xrplTestnetRpc("submit", [{ tx_blob: signedTransactionBlob, fail_hard: true }]);
-  const engineResult = result.engine_result;
-  if (engineResult !== "tesSUCCESS" && engineResult !== "terQUEUED") throw new TypeError(`XRPL Testnet rejected the signed payment with ${String(engineResult ?? "an unknown result")}.`);
-  const transaction = result.tx_json as Record<string, unknown> | undefined;
-  const transactionHash = transaction?.hash;
-  if (typeof transactionHash !== "string" || !/^[A-F0-9]{64}$/u.test(transactionHash)) throw new Error("XRPL Testnet did not return a transaction hash for the signed payment.");
-  return transactionHash;
-}
-
-function assertSignedTransactionMatches(prepared: Readonly<Record<string, unknown>>, signedTransactionBlob: string): void {
-  let signed: Record<string, unknown>;
-  try { signed = decodeXrplTransaction(signedTransactionBlob) as Record<string, unknown>; }
-  catch { throw new TypeError("The signed XRPL transaction could not be decoded."); }
-  const allowedFields = new Set([...Object.keys(prepared), "SigningPubKey", "TxnSignature"]);
-  if (Object.keys(signed).some((field) => !allowedFields.has(field))) throw new TypeError("The signed XRPL transaction contains fields that were not authorized by the Approval Layer.");
-  for (const [field, value] of Object.entries(prepared)) if (signed[field] !== value) throw new TypeError(`The signed XRPL transaction changed protected field ${field}.`);
-  if (typeof signed.SigningPubKey !== "string" || !/^[A-F0-9]{66}$/u.test(signed.SigningPubKey) || typeof signed.TxnSignature !== "string" || !/^[A-F0-9]+$/u.test(signed.TxnSignature)) throw new TypeError("The XRPL transaction is not signed by one allocation key.");
 }
 
 function xrpAmountToDrops(value: string): string {

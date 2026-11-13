@@ -3,7 +3,6 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { Wallet } from "xrpl";
 
 import { createConsoleServer } from "../server.ts";
 
@@ -230,15 +229,12 @@ test("agent prepares an approved registered payment and records only the matchin
   const source = "rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh";
   const destination = "r3kmLJN5D28dHuH8vZNUZpMC43pEHpaocV";
   const transactionHash = "A".repeat(64);
-  const signedTransactionBlob = Wallet.fromSeed("snoPBrXtMeMyMHUVTgbuqAfg1SUTb").sign({ TransactionType: "Payment", Account: source, Destination: destination, Amount: "20000000", Fee: "12", Sequence: 1, LastLedgerSequence: 987674 }).tx_blob;
-  let submittedBlob = "";
   const server = await createConsoleServer({
     runtimeDirectory,
     testnetAccountReader: async (account) => ({ account, balanceDrops: "1000000000", balanceXrp: "1000", ledgerIndex: 987654, observedAt: "2026-11-13T16:00:00.000Z" }),
     agentPaymentAdapter: {
       prepareNativePayment: async (input) => ({ network: "testnet", networkId: 1, intentId: input.intentId, intentDigest: input.intentDigest, organizationId: input.organizationId, transaction: { TransactionType: "Payment", Account: input.account, Destination: input.destination, Amount: "20000000", Fee: "12", Sequence: 1, LastLedgerSequence: 987674 }, serializedTransaction: "ABCD", preparedAtLedgerIndex: 987654 }),
     },
-    testnetSignedSubmitter: async (blob) => { submittedBlob = blob; return transactionHash; },
     testnetTransactionReader: async (hash) => ({ transactionHash: hash, account: source, destination, amountDrops: "20000000", ledgerIndex: 987655, validatedAt: "2026-11-13T16:00:05.000Z", resultCode: "tesSUCCESS" }),
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -262,9 +258,8 @@ test("agent prepares an approved registered payment and records only the matchin
     assert.equal(prepared.approval.decision.outcome, "ALLOW");
     assert.deepEqual({ Account: prepared.transaction.Account, Destination: prepared.transaction.Destination, Amount: prepared.transaction.Amount }, { Account: source, Destination: destination, Amount: "20000000" });
 
-    const completedResponse = await fetch(`${baseUrl}/api/agent/payments/complete`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ authorizationId: prepared.authorizationId, authorization: prepared.authorization, signedTransactionBlob }) });
+    const completedResponse = await fetch(`${baseUrl}/api/agent/payments/complete`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ authorizationId: prepared.authorizationId, authorization: prepared.authorization, transactionHash }) });
     assert.equal(completedResponse.status, 201, JSON.stringify(await completedResponse.clone().json()));
-    assert.equal(submittedBlob, signedTransactionBlob);
     const completed = await completedResponse.json() as { payment: { state: string; transactionHash: string; display: { payeeName: string; allocationName: string } } };
     assert.equal(completed.payment.state, "VALIDATED");
     assert.equal(completed.payment.transactionHash, transactionHash);

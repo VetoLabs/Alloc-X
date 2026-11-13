@@ -713,15 +713,34 @@ async function executeAgentPayment(message) {
   const signed = allocationWallet.sign(prepared.transaction);
   if (!signed?.tx_blob || !/^[A-F0-9]+$/.test(signed.tx_blob)) throw new Error('The allocation signer could not produce a valid XRPL transaction.');
   toast('Signed by the selected allocation', 'Submitting the exact Approval Layer-authorized transaction to XRPL Testnet.');
+  const transactionHash = await submitSignedAllocationTransaction(signed.tx_blob);
+  toast('Submitted to XRPL Testnet', `Waiting for independent ledger verification: ${compact(transactionHash)}`);
   const completed = await api('/api/agent/payments/complete', {
     method: 'POST',
-    body: JSON.stringify({ authorizationId: prepared.authorizationId, authorization: prepared.authorization, signedTransactionBlob: signed.tx_blob }),
+    body: JSON.stringify({ authorizationId: prepared.authorizationId, authorization: prepared.authorization, transactionHash }),
   });
   state.data = await api('/api/bootstrap');
   state.activePaymentId = completed.payment.paymentId;
   state.route = 'payment-detail';
   await Promise.all([refreshWalletBalance(), refreshAllocationBalances()]);
   toast('Payment completed', completed.message);
+}
+
+async function submitSignedAllocationTransaction(signedTransactionBlob) {
+  const Client = globalThis.xrpl?.Client;
+  if (!Client) throw new Error('XRPL Testnet connectivity did not load. Reload the page and try again.');
+  const client = new Client('wss://s.altnet.rippletest.net:51233/');
+  try {
+    await client.connect();
+    const response = await client.submit(signedTransactionBlob, { failHard: true });
+    const result = response?.result;
+    if (!['tesSUCCESS', 'terQUEUED'].includes(result?.engine_result)) throw new Error(`XRPL rejected the payment with ${result?.engine_result || 'an unknown result'}.`);
+    const transactionHash = String(result?.tx_json?.hash || '').toUpperCase();
+    if (!/^[A-F0-9]{64}$/.test(transactionHash)) throw new Error('XRPL did not return a transaction hash.');
+    return transactionHash;
+  } finally {
+    if (client.isConnected()) await client.disconnect().catch(() => {});
+  }
 }
 
 function enableAllocationSigner(allocationId) {
