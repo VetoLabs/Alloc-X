@@ -53,6 +53,8 @@ let operatorRestoreAttempted = false;
 // Testnet allocation signers live only in this tab's memory. Secrets are never
 // persisted, sent to Alloc-X, or mixed with the independently connected operator wallet.
 const allocationSignerWallets = new Map();
+// Main-wallet payroll authority is opt-in, Testnet-only, and kept in memory.
+let mainWalletSigner = null;
 
 function initializeWalletConnection() {
   const sdk = globalThis.XRPLConnect;
@@ -121,6 +123,7 @@ async function restoreOperatorWallet() {
 
 async function walletConnected(account) {
   if (!account?.address) return;
+  if (mainWalletSigner?.address !== account.address) mainWalletSigner = null;
   const walletId = detectCurrentOperatorWalletId();
   if (walletId && account.network?.id === 'testnet') rememberOperatorWallet(walletId, account.address);
   state.walletPickerOpen = false;
@@ -204,6 +207,7 @@ async function connectGemWalletDirect() {
   }
   state.walletPickerOpen = false;
   rememberOperatorWallet('gemwallet', address);
+  if (mainWalletSigner?.address !== address) mainWalletSigner = null;
   state.wallet = { status: 'VERIFYING', account: address, name: 'GemWallet', network: 'testnet', balance: null, error: null };
   completePendingAllocationWallet(address);
   render();
@@ -396,6 +400,12 @@ function allocationRegistryCard(allocation) {
   return `<article class="card registry-card"><div class="registry-card-top"><span class="allocation-symbol large">${esc(allocation.name.slice(0, 2).toUpperCase())}</span><div class="registry-card-status">${signerReady ? status('ALLOW', 'Agent ready') : linked && balance?.status === 'READY' ? status('ALLOW', 'Live') : status('REVIEW', linked ? 'Checking' : 'Needs wallet')}</div></div><p class="registry-type">${esc(allocation.category)}</p><h2>${esc(allocation.name)}</h2><p class="registry-purpose">${esc(allocation.purpose || 'Purpose rules can be added when the allocation policy is configured.')}</p><div class="registry-balance"><span>XRPL Testnet balance</span><strong>${esc(balanceCopy)}</strong>${linked ? `<small>${esc(compact(allocation.walletAddress))}</small>` : '<small>No address registered</small>'}</div>${allocation.spendingRule ? `<div class="registry-rule">${svg('lock')}<span>${esc(allocation.spendingRule)}</span></div>` : ''}${linked ? `<div class="registry-rule">${svg(signerReady ? 'check' : 'lock')}<span>${signerReady ? 'Autonomous Testnet signing is enabled for this tab' : 'Allow Alloc-X to sign from this grant wallet in this tab'}</span></div>` : ''}<div class="registry-actions">${linked ? `<button class="button registry-signer-action ${signerReady ? 'signer-ready' : 'primary'}" type="button" data-action="enable-allocation-signer" data-allocation-id="${esc(allocation.allocationId)}" aria-label="${signerReady ? 'Replace' : 'Enable'} Testnet signing for ${esc(allocation.name)}" title="${signerReady ? 'Signing enabled in this tab. Click to replace the signer.' : 'Enable this allocation wallet to sign Testnet payments in this tab.'}">${svg(signerReady ? 'check' : 'lock', 'signer-icon')}<span>${signerReady ? 'Replace signer' : 'Enable signing'}</span></button>` : `<button class="button primary registry-signer-action" type="button" data-action="connect-allocation-wallet" data-allocation-id="${esc(allocation.allocationId)}">${svg('wallet', 'signer-icon')}<span>Connect wallet</span></button>`}<div class="registry-actions-tools">${linked ? `<button class="button secondary registry-address-action" type="button" data-action="connect-allocation-wallet" data-allocation-id="${esc(allocation.allocationId)}">Change address</button><button class="icon-button" type="button" data-action="refresh-allocation" data-allocation-id="${esc(allocation.allocationId)}" aria-label="Refresh ${esc(allocation.name)} balance" title="Refresh Testnet balance">${svg('refresh')}</button>` : `<span class="registry-actions-hint">Connect a funding wallet to enable signing</span>`}<button class="icon-button danger-icon" type="button" data-action="remove-allocation" data-allocation-id="${esc(allocation.allocationId)}" aria-label="Remove ${esc(allocation.name)}">${svg('trash')}</button></div></div></article>`;
 }
 
+function mainWalletSigningCard() {
+  const account = state.wallet.status === 'CONNECTED' ? state.wallet.account : null;
+  const enabled = Boolean(account && mainWalletSigner?.address === account);
+  return `<section class="card pad main-signer-card" aria-label="Main wallet payroll signing"><div class="main-signer-copy"><div class="card-heading"><div><h2>Main wallet · Employee payroll</h2><p>Salary instructions for registered employees use this main wallet, never a restricted grant wallet.</p></div>${enabled ? status('ALLOW', 'Signing enabled') : status('REVIEW', 'Signing disabled')}</div><p class="small">${account ? `Connected Testnet account: ${esc(compact(account))}` : 'Connect the main XRPL Testnet wallet above.'} Seeds stay only in this browser tab; signing resets on reload or disconnect.</p></div><div class="main-signer-actions"><button class="button ${enabled ? 'secondary' : 'primary'} main-signer-button" type="button" data-action="enable-main-signer" ${account ? '' : 'disabled'}>${svg(enabled ? 'check' : 'lock', 'signer-icon')}<span>${enabled ? 'Replace payroll signer' : 'Enable main wallet signing'}</span></button>${enabled ? '<button class="button secondary" type="button" data-action="disable-main-signer">Disable</button>' : ''}</div></section>`;
+}
+
 function registryDialog() {
   if (state.registryDialog === 'allocation') return `<div class="modal-backdrop"><section class="modal registry-dialog" role="dialog" aria-modal="true" aria-labelledby="allocation-dialog-title"><div class="modal-header"><div><p class="eyebrow">New funding source</p><h2 id="allocation-dialog-title">Add an allocation</h2><p>Name it for the grant, program, department, or public purpose it funds.</p></div><button class="modal-close" type="button" data-action="registry-close" aria-label="Close">×</button></div><form id="allocation-form"><div class="registry-form-body"><div class="form-grid"><div class="field-group"><label for="allocationName">Allocation name</label><input class="field" id="allocationName" name="name" maxlength="80" required placeholder="Healthcare Grant"></div><div class="field-group"><label for="allocationCategory">Type</label><select class="select" id="allocationCategory" name="category"><option>Restricted grant</option><option>Program allocation</option><option>Department budget</option><option>Public allocation</option><option>Payroll allocation</option><option>Other</option></select></div><div class="field-group full"><label for="allocationPurpose">Purpose</label><input class="field" id="allocationPurpose" name="purpose" maxlength="240" placeholder="Medical supplies and approved healthcare operations"></div><div class="field-group full"><label for="allocationRule">Spending restriction</label><input class="field" id="allocationRule" name="spendingRule" maxlength="240" placeholder="Healthcare suppliers only; invoice required"></div><div class="field-group full"><label for="allocationWallet">XRPL Testnet public address <span class="optional">optional</span></label><input class="field code-input" id="allocationWallet" name="walletAddress" maxlength="80" placeholder="r…"><p class="input-note">Paste a public address now, use the currently connected operator address, or connect a wallet after creating the allocation.</p></div></div>${state.wallet.account ? `<button class="inline-wallet-choice" type="button" data-action="use-connected-wallet"><span>${svg('wallet')}</span><span><strong>Use connected ${esc(state.wallet.name || 'XRPL wallet')}</strong><small>${esc(state.wallet.account)}</small></span></button>` : ''}</div><div class="modal-actions"><button class="button secondary" type="button" data-action="registry-close">Cancel</button><button class="button primary" type="submit">Create allocation</button></div></form></section></div>`;
   if (state.registryDialog === 'payee') return `<div class="modal-backdrop"><section class="modal registry-dialog" role="dialog" aria-modal="true" aria-labelledby="payee-dialog-title"><div class="modal-header"><div><p class="eyebrow">New payment recipient</p><h2 id="payee-dialog-title">Add a payee</h2><p>Register a supplier, employee, contractor, or other approved recipient.</p></div><button class="modal-close" type="button" data-action="registry-close" aria-label="Close">×</button></div><form id="payee-form"><div class="registry-form-body"><div class="form-grid"><div class="field-group"><label for="payeeName">Name</label><input class="field" id="payeeName" name="name" maxlength="100" required placeholder="MedTech Supplies"></div><div class="field-group"><label for="payeeType">Payee type</label><select class="select" id="payeeType" name="type"><option value="SUPPLIER">Supplier</option><option value="EMPLOYEE">Employee</option><option value="CONTRACTOR">Contractor</option><option value="OTHER">Other</option></select></div><div class="field-group full"><label for="payeeRole">Service, role, or payment purpose</label><input class="field" id="payeeRole" name="role" maxlength="120" placeholder="Medical equipment supplier"></div><div class="field-group full"><label for="payeeWallet">XRPL Testnet recipient address</label><input class="field code-input" id="payeeWallet" name="walletAddress" maxlength="80" required placeholder="r…"><p class="input-note">Alloc-X checks the XRPL address checksum and rejects duplicates. Identity and wallet ownership are not checked.</p></div></div></div><div class="modal-actions"><button class="button secondary" type="button" data-action="registry-close">Cancel</button><button class="button primary" type="submit">Register payee</button></div></form></section></div>`;
@@ -416,7 +426,7 @@ function payments() { const payments = state.data.payments; const active = state
 
 function paymentTable(payments) { return `<div class="table-wrap"><table class="table"><thead><tr><th>Payment</th><th>Allocation</th><th>Amount</th><th>Security outcome</th><th>Lifecycle</th><th></th></tr></thead><tbody>${payments.map((payment) => `<tr><td><span class="main-cell">${esc(paymentTitle(payment))}</span><span class="sub-cell">${esc(payment.paymentId)}</span></td><td>${esc(paymentAllocationName(payment))}</td><td class="amount">${money(payment.intent.amount)}</td><td>${status(payment.decision.decision.outcome)}</td><td><span class="status neutral">${esc(labelState(payment.state))}</span></td><td><button class="table-link" data-action="open-payment" data-payment-id="${esc(payment.paymentId)}">Open <span aria-hidden="true">→</span></button></td></tr>`).join('')}</tbody></table></div>`; }
 
-function agentWorkspace() { const session = state.agentSession; const actions = session?.actions || []; const capability = state.data.agent; return `<section class="page-heading"><div><p class="eyebrow">Policy-bound payment execution</p><h1>Allocation agent</h1><p>Tell Alloc-X who to pay and the XRP amount. Grant payments use eligible allocations; explicit salary payments to registered employees use your main wallet. Every transfer requires Approval Layer clearance and an enabled Testnet signer.</p></div>${status('ALLOW', state.busy ? 'Executing' : 'Ready')}</section><div class="grid two" style="grid-template-columns:minmax(0,1.35fr) minmax(300px,.85fr)"><section class="card pad"><div class="card-heading"><div><h2>Payment instruction</h2><p>Name a registered payee and the XRP amount. Include “salary” for a registered employee to use the main wallet.</p></div>${svg('agent', 'nav-icon')}</div><form id="agent-form"><div class="field-group"><label for="agentMessage">Instruction</label><input class="field" id="agentMessage" name="message" maxlength="500" required placeholder="Pay Goodwill Clinic 200 XRP" value=""><p class="input-note">${esc(capability.commandFormat)}</p></div><div class="card-divider"></div><div class="row"><span class="small">An ALLOW decision permits only the selected in-memory Testnet signer. Employee salary instructions select the main wallet.</span><button class="button primary" type="submit" ${state.busy ? 'disabled' : ''}>${state.busy ? 'Executing…' : `Pay with Alloc-X ${svg('arrow', 'nav-icon')}`}</button></div></form>${actions.length ? `<div class="card-divider"></div><div class="card-heading"><div><h2>Voice instruction trace</h2><p>Confirmed transcript history</p></div><span class="status neutral">${actions.length} steps</span></div><div class="timeline">${actions.slice(-4).map((action) => `<div class="event ${action.name === 'payment.draft' ? 'allowed' : action.name === 'evidence.request' ? 'review' : ''}"><div class="event-title">${esc(action.name.replaceAll('.', ' · '))}</div><div class="event-copy">${esc(action.detail)}</div><div class="event-time">${when(action.occurredAt)} · input ${esc(compact(action.inputDigest))}</div></div>`).join('')}</div>` : empty('agent', 'Ready for a payment instruction', 'Type or record a payment instruction using a registered payee and the XRP amount.')}</section><aside class="card pad security-panel"><div class="card-heading"><div><h2>Execution boundary</h2><p>Allocation secrets remain only in the current browser tab's memory.</p></div></div><div class="control"><span class="control-icon">1</span><div><b>Registered records only</b><span>The destination must match a checksum-validated payee in this workspace.</span></div></div><div class="control"><span class="control-icon">2</span><div><b>Signed Approval Layer decision</b><span>Policy, balance, destination, risk, and active security stops are checked before signing.</span></div></div><div class="control"><span class="control-icon">3</span><div><b>Autonomous allocation signing</b><span>Only the selected grant signer, or the main signer for employee payroll, signs the exact authorized transaction.</span></div></div><div class="control"><span class="control-icon">4</span><div><b>Validated completion</b><span>A payment is recorded only after XRPL reports a final tesSUCCESS result matching the authorized fields.</span></div></div></aside></div>`; }
+function agentWorkspace() { const session = state.agentSession; const actions = session?.actions || []; const capability = state.data.agent; return `<section class="page-heading"><div><p class="eyebrow">Policy-bound payment execution</p><h1>Allocation agent</h1><p>Tell Alloc-X who to pay and the XRP amount. Grant payments use eligible allocations; explicit salary payments to registered employees use your main wallet. Every transfer requires Approval Layer clearance and an enabled Testnet signer.</p></div>${status('ALLOW', state.busy ? 'Executing' : 'Ready')}</section>${mainWalletSigningCard()}<div class="grid two" style="grid-template-columns:minmax(0,1.35fr) minmax(300px,.85fr)"><section class="card pad"><div class="card-heading"><div><h2>Payment instruction</h2><p>Name a registered payee and the XRP amount. Include “salary” for a registered employee to use the main wallet.</p></div>${svg('agent', 'nav-icon')}</div><form id="agent-form"><div class="field-group"><label for="agentMessage">Instruction</label><input class="field" id="agentMessage" name="message" maxlength="500" required placeholder="Pay Goodwill Clinic 200 XRP" value=""><p class="input-note">${esc(capability.commandFormat)}</p></div><div class="card-divider"></div><div class="row"><span class="small">An ALLOW decision permits only the selected in-memory Testnet signer. Employee salary instructions select the main wallet.</span><button class="button primary" type="submit" ${state.busy ? 'disabled' : ''}>${state.busy ? 'Executing…' : `Pay with Alloc-X ${svg('arrow', 'nav-icon')}`}</button></div></form>${actions.length ? `<div class="card-divider"></div><div class="card-heading"><div><h2>Voice instruction trace</h2><p>Confirmed transcript history</p></div><span class="status neutral">${actions.length} steps</span></div><div class="timeline">${actions.slice(-4).map((action) => `<div class="event ${action.name === 'payment.draft' ? 'allowed' : action.name === 'evidence.request' ? 'review' : ''}"><div class="event-title">${esc(action.name.replaceAll('.', ' · '))}</div><div class="event-copy">${esc(action.detail)}</div><div class="event-time">${when(action.occurredAt)} · input ${esc(compact(action.inputDigest))}</div></div>`).join('')}</div>` : empty('agent', 'Ready for a payment instruction', 'Type or record a payment instruction using a registered payee and the XRP amount.')}</section><aside class="card pad security-panel"><div class="card-heading"><div><h2>Execution boundary</h2><p>Allocation secrets remain only in the current browser tab's memory.</p></div></div><div class="control"><span class="control-icon">1</span><div><b>Registered records only</b><span>The destination must match a checksum-validated payee in this workspace.</span></div></div><div class="control"><span class="control-icon">2</span><div><b>Signed Approval Layer decision</b><span>Policy, balance, destination, risk, and active security stops are checked before signing.</span></div></div><div class="control"><span class="control-icon">3</span><div><b>Autonomous allocation signing</b><span>Only the selected grant signer, or the main signer for employee payroll, signs the exact authorized transaction.</span></div></div><div class="control"><span class="control-icon">4</span><div><b>Validated completion</b><span>A payment is recorded only after XRPL reports a final tesSUCCESS result matching the authorized fields.</span></div></div></aside></div>`; }
 
 function cashRunway() { return `<section class="page-heading"><div><p class="eyebrow">Advisory cash planning</p><h1>Cash runway</h1><p>Forecasts will be calculated only from a connected treasury and recorded inflows, obligations, reserves, and payroll rules.</p></div>${status('REVIEW', 'Configuration required')}</section><div class="banner wallet-banner attention">${svg('shield')}<div><strong>No estimated money values are displayed</strong>Connect the Testnet treasury and configure authoritative planning inputs before Alloc-X generates a runway.</div>${state.wallet.status === 'CONNECTED' ? '' : button('Connect wallet', 'wallet-connect', 'primary')}</div><section class="card pad">${empty('funds', 'Planning inputs are not configured', 'Add verified inflows, obligations and protection rules to generate a traceable forecast from the live Testnet balance.')}</section>`; }
 
@@ -556,6 +566,7 @@ async function onAction(event) {
   if (action === 'wallet-disconnect') {
     operatorSessionEpoch += 1;
     forgetOperatorWallet();
+    mainWalletSigner = null;
     try { await walletManager?.disconnect(); } catch (error) { toast('Wallet disconnect failed', error.message, true); }
     state.wallet = { status: 'DISCONNECTED', account: null, name: null, balance: null, error: null };
     render();
@@ -578,6 +589,8 @@ async function onAction(event) {
     return;
   }
   if (action === 'enable-allocation-signer') return enableAllocationSigner(event.currentTarget.dataset.allocationId);
+  if (action === 'enable-main-signer') return enableMainWalletSigner();
+  if (action === 'disable-main-signer') { mainWalletSigner = null; render(); toast('Main wallet signing disabled', 'Autonomous payroll signing is now disabled for this tab.'); return; }
   if (action === 'refresh-allocation') return refreshAllocationBalance(event.currentTarget.dataset.allocationId, true);
   if (action === 'remove-allocation') return removeRegisteredAllocation(event.currentTarget.dataset.allocationId);
   if (action === 'remove-payee') return removeRegisteredPayee(event.currentTarget.dataset.payeeId);
@@ -691,19 +704,24 @@ async function submitAgentInstruction(event) {
 async function executeAgentPayment(message) {
   const prepared = await api('/api/agent/payments/prepare', {
     method: 'POST',
-    body: JSON.stringify({ message, registry: { allocations: state.registry.allocations, payees: state.registry.payees } }),
+    body: JSON.stringify({ message, ...(state.wallet.status === 'CONNECTED' && state.wallet.account ? { mainWalletAddress: state.wallet.account } : {}), registry: { allocations: state.registry.allocations, payees: state.registry.payees } }),
   });
   toast('Payment allowed — Alloc-X is executing', prepared.message);
   const sourceAccount = prepared.payment?.sourceAccount;
-  const allocationWallet = allocationSignerWallets.get(sourceAccount);
-  if (!allocationWallet) {
-    state.route = 'allocations';
+  const payroll = prepared.payment?.sourceKind === 'MAIN_WALLET_PAYROLL';
+  const signer = payroll
+    ? (mainWalletSigner?.address === sourceAccount && state.wallet.account === sourceAccount ? mainWalletSigner.wallet : null)
+    : allocationSignerWallets.get(sourceAccount);
+  if (!signer) {
+    state.route = payroll ? 'agent' : 'allocations';
     render();
-    throw new Error(`Alloc-X selected ${prepared.payment?.allocationName || 'an allocation'}, but autonomous signing is not enabled for ${compact(sourceAccount)}. Click Enable agent signing on that allocation and enter its Testnet secret.`);
+    throw new Error(payroll
+      ? 'Alloc-X selected the main wallet for employee salaries. Connect the main Testnet wallet and click Enable main wallet signing in the Allocation Agent first.'
+      : `Alloc-X selected ${prepared.payment?.allocationName || 'an allocation'}, but autonomous signing is not enabled for ${compact(sourceAccount)}. Enable signing for that allocation first.`);
   }
-  const signed = allocationWallet.sign(prepared.transaction);
+  const signed = signer.sign(prepared.transaction);
   if (!signed?.tx_blob || !/^[A-F0-9]+$/.test(signed.tx_blob)) throw new Error('The allocation signer could not produce a valid XRPL transaction.');
-  toast('Signed by the selected allocation', 'Submitting the exact Approval Layer-authorized transaction to XRPL Testnet.');
+  toast(payroll ? 'Signed by main payroll wallet' : 'Signed by the selected allocation', 'Submitting the exact Approval Layer-authorized transaction to XRPL Testnet.');
   const transactionHash = await submitSignedAllocationTransaction(signed.tx_blob);
   toast('Submitted to XRPL Testnet', `Waiting for independent ledger verification: ${compact(transactionHash)}`);
   const completed = await api('/api/agent/payments/complete', {
@@ -731,6 +749,24 @@ async function submitSignedAllocationTransaction(signedTransactionBlob) {
     return transactionHash;
   } finally {
     if (client.isConnected()) await client.disconnect().catch(() => {});
+  }
+}
+
+function enableMainWalletSigner() {
+  const address = state.wallet.status === 'CONNECTED' && state.wallet.network === 'testnet' ? state.wallet.account : null;
+  if (!address) return toast('Main wallet required', 'Connect and verify the main wallet on XRPL Testnet first.', true);
+  const secret = globalThis.prompt("Enable autonomous payroll signing for the connected main XRPL Testnet wallet.\n\nUse a dedicated Testnet account, never a mainnet or high-value seed. The seed remains only in this browser tab.\n\nEnter the connected wallet's Testnet seed:");
+  if (!secret) return;
+  try {
+    const Wallet = globalThis.xrpl?.Wallet;
+    if (!Wallet?.fromSeed) throw new Error('XRPL signing support did not load. Reload and try again.');
+    const wallet = Wallet.fromSeed(secret.trim());
+    if (wallet.address !== address) throw new Error('The supplied seed does not match the connected main Testnet wallet.');
+    mainWalletSigner = { address, wallet };
+    render();
+    toast('Main wallet signing enabled', 'Explicit employee salary instructions may now be signed from this main Testnet wallet.');
+  } catch (error) {
+    toast('Main wallet signing unavailable', error.message, true);
   }
 }
 
