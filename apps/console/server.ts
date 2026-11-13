@@ -3,6 +3,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { decode as decodeXrplTransaction } from "ripple-binary-codec";
 
 import { InMemoryTreasuryAccounting } from "../../packages/accounting/src/index.ts";
 import { InMemoryAuditChain } from "../../packages/audit-chain/src/index.ts";
@@ -79,7 +80,7 @@ type ValidatedTestnetPayment = {
 
 type WorkspaceAllocationInput = { readonly allocationId: string; readonly name: string; readonly category: string; readonly purpose: string; readonly spendingRule: string; readonly walletAddress: string };
 type WorkspacePayeeInput = { readonly payeeId: string; readonly name: string; readonly type: string; readonly role: string; readonly walletAddress: string; readonly status: string; readonly createdAt: string };
-type AgentPaymentRequest = { readonly message: string; readonly sourceAccount: string; readonly registry: { readonly allocations: readonly WorkspaceAllocationInput[]; readonly payees: readonly WorkspacePayeeInput[] } };
+type AgentPaymentRequest = { readonly message: string; readonly sourceAccount?: string; readonly registry: { readonly allocations: readonly WorkspaceAllocationInput[]; readonly payees: readonly WorkspacePayeeInput[] } };
 
 type StoredPayments = { readonly contractVersion: "1.0"; readonly payments: readonly PaymentView[] };
 
@@ -88,6 +89,7 @@ export interface ConsoleServerOptions {
   readonly settlement?: { readonly path: AutonomousPaymentPath; readonly treasuryAccount: string; readonly workerId: string };
   readonly testnetAccountReader?: (address: string) => Promise<TestnetAccountSnapshot>;
   readonly agentPaymentAdapter?: { prepareNativePayment(input: { readonly intentId: string; readonly intentDigest: string; readonly organizationId: string; readonly account: string; readonly destination: string; readonly amountXrp: string; readonly mode: "sequence" }): Promise<PreparedAgentPayment> };
+  readonly testnetSignedSubmitter?: (signedTransactionBlob: string) => Promise<string>;
   readonly testnetTransactionReader?: (hash: string) => Promise<ValidatedTestnetPayment>;
   /** Local identity fixtures. Production adapters must derive these actors from an authenticated session. */
   readonly securityActors?: { readonly operator: ControlActor; readonly approver: ControlActor; readonly escalator: ControlActor };
@@ -281,9 +283,11 @@ export async function createConsoleServer(options: ConsoleServerOptions = {}): P
       if (request.method === "POST" && url.pathname === "/api/agent/payments/prepare") {
         const body = parseAgentPaymentRequest(await requestJson(request));
         const resolved = resolveAgentPayment(body);
+        const sourceAccount = resolved.allocation.walletAddress;
+        if (!sourceAccount) throw new TypeError(`${resolved.allocation.name} does not have an XRPL Testnet wallet.`);
         controls.assertPaymentAllowed({ organizationId, beneficiaryId: resolved.beneficiaryId, asset: "XRP" });
-        const account = await (options.testnetAccountReader ?? readTestnetAccount)(body.sourceAccount);
-        if (account.account !== body.sourceAccount) throw new Error("XRPL account response did not match the selected allocation wallet.");
+        const account = await (options.testnetAccountReader ?? readTestnetAccount)(sourceAccount);
+        if (account.account !== sourceAccount) throw new Error("XRPL account response did not match the selected allocation wallet.");
         if (BigInt(account.balanceDrops) <= BigInt(resolved.amountDrops)) throw new TypeError(`${resolved.allocation.name} does not have enough validated XRP to cover this payment and ledger reserve.`);
         const preparedAt = now();
         const token = crypto.randomUUID().replaceAll("-", "");
@@ -317,7 +321,7 @@ export async function createConsoleServer(options: ConsoleServerOptions = {}): P
         if (approvalReceipt.signedDecision.decision.outcome !== "ALLOW") {
           return json(response, 409, { error: `Approval Layer returned ${approvalReceipt.signedDecision.decision.outcome}. ${approvalReceipt.signedDecision.decision.reasonCodes.join(", ") || "The payment requires review."}` });
         }
-        const prepared = await agentPaymentAdapter.prepareNativePayment({ intentId: intent.intentId, intentDigest, organizationId, account: body.sourceAccount, destination: resolved.payee.walletAddress, amountXrp: resolved.amount, mode: "sequence" });
+        const prepared = await agentPaymentAdapter.prepareNativePayment({ intentId: intent.intentId, intentDigest, organizationId, account: sourceAccount, destination: resolved.payee.walletAddress, amountXrp: resolved.amount, mode: "sequence" });
         const authorizationId = `authorization_${token}`;
         const preparation: AgentPaymentPreparation = Object.freeze({ authorizationId, instruction: body.message, payeeName: resolved.payee.name, allocationName: resolved.allocation.name, intent, intentDigest, prepared, receipt: approvalReceipt, expiresAt: intent.requestedExecutionWindow.expiresAt });
         agentPreparations.set(authorizationId, preparation);
@@ -327,19 +331,21 @@ export async function createConsoleServer(options: ConsoleServerOptions = {}): P
           authorizationId,
           authorization,
           transaction: prepared.transaction,
-          payment: { amount: intent.amount, asset: intent.asset, payeeName: preparation.payeeName, allocationName: preparation.allocationName, sourceAccount: body.sourceAccount, destination: resolved.payee.walletAddress },
+          payment: { amount: intent.amount, asset: intent.asset, payeeName: preparation.payeeName, allocationName: preparation.allocationName, sourceAccount, destination: resolved.payee.walletAddress },
           approval: approvalReceipt.signedDecision,
-          message: `Approval Layer allowed ${intent.amount} XRP from ${preparation.allocationName} to ${preparation.payeeName}. Authorize the prepared transaction in your connected wallet.`,
+          message: `Approval Layer allowed ${intent.amount} XRP from ${preparation.allocationName} to ${preparation.payeeName}. Alloc-X selected the eligible allocation and bound the exact transaction for autonomous Testnet signing.`,
         });
       }
       if (request.method === "POST" && url.pathname === "/api/agent/payments/complete") {
         const body = parseAgentPaymentCompletion(await requestJson(request));
-        const existing = payments.find((payment) => payment.transactionHash === body.transactionHash);
-        if (existing) return json(response, 200, { payment: existing, message: "The transaction was already validated and recorded." });
         const preparation = agentPreparations.get(body.authorizationId) ?? restoreAgentPreparation(body.authorization, verifier);
         if (preparation.authorizationId !== body.authorizationId) throw new TypeError("Payment authorization identifier does not match its signed execution record.");
         assertSettlementAuthorized({ signedDecision: preparation.receipt.signedDecision, organizationId, intent: preparation.intent, now: now(), verifier });
-        const validated = await (options.testnetTransactionReader ?? readValidatedTestnetPayment)(body.transactionHash);
+        if (body.signedTransactionBlob) assertSignedTransactionMatches(preparation.prepared.transaction, body.signedTransactionBlob);
+        const transactionHash = body.signedTransactionBlob ? await (options.testnetSignedSubmitter ?? submitSignedTestnetPayment)(body.signedTransactionBlob) : body.transactionHash!;
+        const existing = payments.find((payment) => payment.transactionHash === transactionHash);
+        if (existing) return json(response, 200, { payment: existing, message: "The transaction was already validated and recorded." });
+        const validated = await (options.testnetTransactionReader ?? readValidatedTestnetPayment)(transactionHash);
         if (validated.account !== preparation.prepared.transaction.Account || validated.destination !== preparation.prepared.transaction.Destination || validated.amountDrops !== preparation.prepared.transaction.Amount) throw new TypeError("Validated XRPL transaction does not match the payment authorized by the Approval Layer.");
         const completedAt = validated.validatedAt;
         const paymentId = `pay_${preparation.intent.intentId.slice(3)}`;
@@ -358,7 +364,7 @@ export async function createConsoleServer(options: ConsoleServerOptions = {}): P
           policyCitations: [{ clause: "Workspace Testnet payment policy", sourceHash: preparation.receipt.evaluation.policyDigest }],
           budgetMovement: { allocationId: preparation.intent.allocationId, amount: preparation.intent.amount, state: "VALIDATED" },
           securityDecision: { decisionDigest: preparation.receipt.signedDecision.decisionDigest, signature: preparation.receipt.signedDecision.signature, signerKeyId: preparation.receipt.signedDecision.keyId },
-          signerAttestations: [{ signerId: "connected-xrpl-wallet", status: "AUTHORIZED" }],
+          signerAttestations: [{ signerId: body.signedTransactionBlob ? "allocation-session-signer" : "connected-xrpl-wallet", status: "AUTHORIZED" }],
           ledger: { network: "xrpl-testnet", ledgerIndex: validated.ledgerIndex, validatedAt: validated.validatedAt },
         });
         const payment: PaymentView = Object.freeze({
@@ -632,17 +638,18 @@ function workspaceEvaluationContext(intent: PaymentIntent, validatedBalance: str
 function parseAgentPaymentRequest(value: unknown): AgentPaymentRequest {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError("Agent payment instruction is required.");
   const record = value as Record<string, unknown>;
-  if (Object.keys(record).some((key) => !["message", "sourceAccount", "registry"].includes(key)) || typeof record.message !== "string" || typeof record.sourceAccount !== "string" || !record.registry || typeof record.registry !== "object" || Array.isArray(record.registry)) throw new TypeError("Agent payment instruction is invalid.");
+  if (Object.keys(record).some((key) => !["message", "sourceAccount", "registry"].includes(key)) || typeof record.message !== "string" || (record.sourceAccount !== undefined && typeof record.sourceAccount !== "string") || !record.registry || typeof record.registry !== "object" || Array.isArray(record.registry)) throw new TypeError("Agent payment instruction is invalid.");
   const message = record.message.trim().replace(/\s+/g, " ");
   if (!message || message.length > 500) throw new TypeError("Agent instruction must be between 1 and 500 characters.");
-  if (!isValidClassicAddress(record.sourceAccount)) throw new TypeError("Connect a valid XRPL Testnet allocation wallet before asking Alloc-X to pay.");
+  const sourceAccount = typeof record.sourceAccount === "string" ? record.sourceAccount : undefined;
+  if (sourceAccount !== undefined && !isValidClassicAddress(sourceAccount)) throw new TypeError("The selected XRPL Testnet allocation wallet is invalid.");
   const registry = record.registry as Record<string, unknown>;
   if (Object.keys(registry).some((key) => !["allocations", "payees"].includes(key)) || !Array.isArray(registry.allocations) || !Array.isArray(registry.payees) || registry.allocations.length > 100 || registry.payees.length > 250) throw new TypeError("Workspace payment registry is invalid.");
   const allocations = registry.allocations.map(parseWorkspaceAllocation);
   const payees = registry.payees.map(parseWorkspacePayee);
   if (!allocations.length) throw new TypeError("Create and connect at least one allocation wallet before asking Alloc-X to pay.");
   if (!payees.length) throw new TypeError("Register the intended payee before asking Alloc-X to pay.");
-  return { message, sourceAccount: record.sourceAccount, registry: { allocations, payees } };
+  return { message, ...(sourceAccount ? { sourceAccount } : {}), registry: { allocations, payees } };
 }
 
 function parseWorkspaceAllocation(value: unknown): WorkspaceAllocationInput {
@@ -682,13 +689,13 @@ function resolveAgentPayment(input: AgentPaymentRequest) {
   const contextTokens = meaningfulTokens(`${input.message} ${payee.name} ${payee.role}`);
   const ranked = linked.map((allocation) => ({ allocation, score: [...meaningfulTokens(`${allocation.name} ${allocation.category} ${allocation.purpose} ${allocation.spendingRule}`)].filter((token) => contextTokens.has(token)).length })).sort((left, right) => right.score - left.score || left.allocation.name.localeCompare(right.allocation.name));
   const top = ranked[0]!;
-  const matchingSource = linked.filter((allocation) => allocation.walletAddress === input.sourceAccount);
+  const matchingSource = input.sourceAccount ? linked.filter((allocation) => allocation.walletAddress === input.sourceAccount) : [];
   let allocation: WorkspaceAllocationInput;
   if (top.score > 0 && (ranked.length === 1 || top.score > ranked[1]!.score)) allocation = top.allocation;
   else if (matchingSource.length === 1) allocation = matchingSource[0]!;
   else throw new TypeError("Mention the allocation name or purpose so Alloc-X can select one funding source safely.");
-  if (allocation.walletAddress !== input.sourceAccount) throw new TypeError(`Alloc-X selected ${allocation.name}. Switch the connected wallet to ${compactAddress(allocation.walletAddress)} and confirm the instruction again.`);
-  if (payee.walletAddress === input.sourceAccount) throw new TypeError("The selected allocation wallet cannot pay itself.");
+  if (input.sourceAccount && allocation.walletAddress !== input.sourceAccount) throw new TypeError(`Alloc-X selected ${allocation.name}; the requested source does not match that allocation.`);
+  if (payee.walletAddress === allocation.walletAddress) throw new TypeError("The selected allocation wallet cannot pay itself.");
   return {
     amount,
     amountDrops,
@@ -699,13 +706,16 @@ function resolveAgentPayment(input: AgentPaymentRequest) {
   };
 }
 
-function parseAgentPaymentCompletion(value: unknown): { readonly authorizationId: string; readonly transactionHash: string; readonly authorization: { readonly token: string; readonly signature: string; readonly keyId: string } } {
+function parseAgentPaymentCompletion(value: unknown): { readonly authorizationId: string; readonly transactionHash?: string; readonly signedTransactionBlob?: string; readonly authorization: { readonly token: string; readonly signature: string; readonly keyId: string } } {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError("Payment completion is required.");
   const record = value as Record<string, unknown>;
-  if (Object.keys(record).some((key) => !["authorizationId", "transactionHash", "authorization"].includes(key)) || typeof record.authorizationId !== "string" || !/^authorization_[a-f0-9]{32}$/u.test(record.authorizationId) || typeof record.transactionHash !== "string" || !/^[A-F0-9]{64}$/u.test(record.transactionHash) || !record.authorization || typeof record.authorization !== "object" || Array.isArray(record.authorization)) throw new TypeError("Payment completion is invalid.");
+  if (Object.keys(record).some((key) => !["authorizationId", "transactionHash", "signedTransactionBlob", "authorization"].includes(key)) || typeof record.authorizationId !== "string" || !/^authorization_[a-f0-9]{32}$/u.test(record.authorizationId) || !record.authorization || typeof record.authorization !== "object" || Array.isArray(record.authorization)) throw new TypeError("Payment completion is invalid.");
+  const transactionHash = typeof record.transactionHash === "string" && /^[A-F0-9]{64}$/u.test(record.transactionHash) ? record.transactionHash : undefined;
+  const signedTransactionBlob = typeof record.signedTransactionBlob === "string" && /^[A-F0-9]{128,32768}$/u.test(record.signedTransactionBlob) ? record.signedTransactionBlob : undefined;
+  if ((transactionHash ? 1 : 0) + (signedTransactionBlob ? 1 : 0) !== 1) throw new TypeError("Provide either one validated transaction hash or one signed XRPL transaction blob.");
   const authorization = record.authorization as Record<string, unknown>;
   if (Object.keys(authorization).some((key) => !["token", "signature", "keyId"].includes(key)) || typeof authorization.token !== "string" || authorization.token.length > 24_000 || typeof authorization.signature !== "string" || typeof authorization.keyId !== "string") throw new TypeError("Signed payment authorization is invalid.");
-  return { authorizationId: record.authorizationId, transactionHash: record.transactionHash, authorization: { token: authorization.token, signature: authorization.signature, keyId: authorization.keyId } };
+  return { authorizationId: record.authorizationId, ...(transactionHash ? { transactionHash } : {}), ...(signedTransactionBlob ? { signedTransactionBlob } : {}), authorization: { token: authorization.token, signature: authorization.signature, keyId: authorization.keyId } };
 }
 
 function restoreAgentPreparation(authorization: { readonly token: string; readonly signature: string; readonly keyId: string }, verifier: { readonly keyId: string; verify(payload: string, signature: string): boolean }): AgentPaymentPreparation {
@@ -908,6 +918,26 @@ async function xrplTestnetRpc(method: string, params: readonly unknown[]): Promi
   const payload = await response.json() as { result?: Record<string, unknown> };
   if (!payload.result || payload.result.status === "error" || typeof payload.result.error === "string") throw new Error(`XRPL Testnet rejected ${method}.`);
   return payload.result;
+}
+
+async function submitSignedTestnetPayment(signedTransactionBlob: string): Promise<string> {
+  const result = await xrplTestnetRpc("submit", [{ tx_blob: signedTransactionBlob, fail_hard: true }]);
+  const engineResult = result.engine_result;
+  if (engineResult !== "tesSUCCESS" && engineResult !== "terQUEUED") throw new TypeError(`XRPL Testnet rejected the signed payment with ${String(engineResult ?? "an unknown result")}.`);
+  const transaction = result.tx_json as Record<string, unknown> | undefined;
+  const transactionHash = transaction?.hash;
+  if (typeof transactionHash !== "string" || !/^[A-F0-9]{64}$/u.test(transactionHash)) throw new Error("XRPL Testnet did not return a transaction hash for the signed payment.");
+  return transactionHash;
+}
+
+function assertSignedTransactionMatches(prepared: Readonly<Record<string, unknown>>, signedTransactionBlob: string): void {
+  let signed: Record<string, unknown>;
+  try { signed = decodeXrplTransaction(signedTransactionBlob) as Record<string, unknown>; }
+  catch { throw new TypeError("The signed XRPL transaction could not be decoded."); }
+  const allowedFields = new Set([...Object.keys(prepared), "SigningPubKey", "TxnSignature"]);
+  if (Object.keys(signed).some((field) => !allowedFields.has(field))) throw new TypeError("The signed XRPL transaction contains fields that were not authorized by the Approval Layer.");
+  for (const [field, value] of Object.entries(prepared)) if (signed[field] !== value) throw new TypeError(`The signed XRPL transaction changed protected field ${field}.`);
+  if (typeof signed.SigningPubKey !== "string" || !/^[A-F0-9]{66}$/u.test(signed.SigningPubKey) || typeof signed.TxnSignature !== "string" || !/^[A-F0-9]+$/u.test(signed.TxnSignature)) throw new TypeError("The XRPL transaction is not signed by one allocation key.");
 }
 
 function xrpAmountToDrops(value: string): string {
