@@ -1,5 +1,6 @@
 import { addAllocation, addPayee, assignAllocationWallet, isClassicAddress, readWorkspaceRegistry, removeAllocation, removePayee, writeWorkspaceRegistry } from './workspace-registry.js';
 import { readOperatorWallet, rememberOperatorWallet, forgetOperatorWallet } from './wallet-session.js';
+import { outgoingNativePayments } from './ledger-history.js';
 
 const icons = {
   grid: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
@@ -24,12 +25,11 @@ const icons = {
   trash: '<path d="M4 7h16M9 7V4h6v3M7 7l1 14h8l1-14M10 11v6M14 11v6"/>',
 };
 
-const state = { data: null, route: 'overview', activePaymentId: null, activeBeneficiaryId: null, agentSession: null, voiceInstruction: null, voiceState: 'IDLE', voiceTranscript: '', voiceConfidence: undefined, busy: false, mobileMenuOpen: false, walletPickerOpen: false, walletInstallProvider: null, walletConnecting: null, pendingAllocationWalletId: null, registryDialog: null, registry: readWorkspaceRegistry(), allocationBalances: {}, wallet: { status: 'DISCONNECTED', account: null, name: null, balance: null, error: null } };
+const state = { data: null, route: 'overview', activePaymentId: null, activeBeneficiaryId: null, agentSession: null, voiceInstruction: null, voiceState: 'IDLE', voiceTranscript: '', voiceConfidence: undefined, busy: false, mobileMenuOpen: false, walletPickerOpen: false, walletInstallProvider: null, walletConnecting: null, pendingAllocationWalletId: null, registryDialog: null, registry: readWorkspaceRegistry(), allocationBalances: {}, wallet: { status: 'DISCONNECTED', account: null, name: null, balance: null, error: null }, ledgerHistoryByAccount: {}, ledgerHistoryLoading: false, ledgerHistoryError: null };
 const routes = {
   overview: { label: 'Overview', icon: 'grid' },
   allocations: { label: 'Allocations', icon: 'funds' },
   payments: { label: 'Payments', icon: 'payment' },
-  'new-payment': { label: 'New payment', icon: 'plus' },
   agent: { label: 'Allocation agent', icon: 'agent' },
   forecast: { label: 'Cash runway', icon: 'funds' },
   schedule: { label: 'Payment plan', icon: 'clock' },
@@ -54,6 +54,8 @@ let operatorRestoreAttempted = false;
 // Testnet allocation signers live only in this tab's memory. Secrets are never
 // persisted, sent to Alloc-X, or mixed with the independently connected operator wallet.
 const allocationSignerWallets = new Map();
+// Main-wallet payroll authority is opt-in, Testnet-only, and kept in memory.
+let mainWalletSigner = null;
 
 function initializeWalletConnection() {
   const sdk = globalThis.XRPLConnect;
@@ -122,6 +124,7 @@ async function restoreOperatorWallet() {
 
 async function walletConnected(account) {
   if (!account?.address) return;
+  if (mainWalletSigner?.address !== account.address) mainWalletSigner = null;
   const walletId = detectCurrentOperatorWalletId();
   if (walletId && account.network?.id === 'testnet') rememberOperatorWallet(walletId, account.address);
   state.walletPickerOpen = false;
@@ -130,6 +133,7 @@ async function walletConnected(account) {
   completePendingAllocationWallet(account.address);
   if (state.data) render();
   await refreshWalletBalance();
+  if (state.route === 'payments') void refreshLedgerHistory();
 }
 
 function operatorAccount() {
@@ -205,10 +209,12 @@ async function connectGemWalletDirect() {
   }
   state.walletPickerOpen = false;
   rememberOperatorWallet('gemwallet', address);
+  if (mainWalletSigner?.address !== address) mainWalletSigner = null;
   state.wallet = { status: 'VERIFYING', account: address, name: 'GemWallet', network: 'testnet', balance: null, error: null };
   completePendingAllocationWallet(address);
   render();
   await refreshWalletBalance();
+  if (state.route === 'payments') void refreshLedgerHistory();
   return { address, network: { id: 'testnet' } };
 }
 
@@ -285,7 +291,7 @@ function render() {
     <aside class="sidebar" aria-label="Primary navigation">
       <a class="brand" href="#overview" data-route="overview">${logo()}<span class="brand-name">Alloc-X<small>Trusted allocation</small></span></a>
       <div class="nav-label">Workspace</div>
-      <nav class="nav">${nav(['overview', 'allocations', 'beneficiaries', 'payments', 'new-payment', 'agent', 'forecast', 'schedule'])}</nav>
+      <nav class="nav">${nav(['overview', 'allocations', 'beneficiaries', 'payments', 'agent', 'forecast', 'schedule'])}</nav>
       <div class="nav-label">Assurance</div>
       <nav class="nav">${nav(['security', 'audit', 'operations', 'activation', 'offline-trust', 'offline-sync', 'offline-revalidation', 'organization-capabilities', 'commercial-controls', 'nonprofit-controls', 'public-sector-controls'])}</nav>
       <div class="sidebar-bottom"><div class="secure-state"><i class="secure-dot"></i>${esc(data.organization.environment)}</div><div class="identity"><span class="avatar">XR</span><span><strong>${esc(walletIdentityLabel())}</strong><span>Main wallet</span></span></div></div>
@@ -336,7 +342,7 @@ function page() {
   if (state.route === 'overview') return overview();
   if (state.route === 'allocations') return allocationWorkspace();
   if (state.route === 'payments') return payments();
-  if (state.route === 'new-payment') return newPayment();
+  if (state.route === 'new-payment') return agentWorkspace();
   if (state.route === 'agent') return agentWorkspace();
   if (state.route === 'forecast') return cashRunway();
   if (state.route === 'schedule') return paymentPlan();
@@ -397,6 +403,12 @@ function allocationRegistryCard(allocation) {
   return `<article class="card registry-card"><div class="registry-card-top"><span class="allocation-symbol large">${esc(allocation.name.slice(0, 2).toUpperCase())}</span><div class="registry-card-status">${signerReady ? status('ALLOW', 'Agent ready') : linked && balance?.status === 'READY' ? status('ALLOW', 'Live') : status('REVIEW', linked ? 'Checking' : 'Needs wallet')}</div></div><p class="registry-type">${esc(allocation.category)}</p><h2>${esc(allocation.name)}</h2><p class="registry-purpose">${esc(allocation.purpose || 'Purpose rules can be added when the allocation policy is configured.')}</p><div class="registry-balance"><span>XRPL Testnet balance</span><strong>${esc(balanceCopy)}</strong>${linked ? `<small>${esc(compact(allocation.walletAddress))}</small>` : '<small>No address registered</small>'}</div>${allocation.spendingRule ? `<div class="registry-rule">${svg('lock')}<span>${esc(allocation.spendingRule)}</span></div>` : ''}${linked ? `<div class="registry-rule">${svg(signerReady ? 'check' : 'lock')}<span>${signerReady ? 'Autonomous Testnet signing is enabled for this tab' : 'Allow Alloc-X to sign from this grant wallet in this tab'}</span></div>` : ''}<div class="registry-actions">${linked ? `<button class="button registry-signer-action ${signerReady ? 'signer-ready' : 'primary'}" type="button" data-action="enable-allocation-signer" data-allocation-id="${esc(allocation.allocationId)}" aria-label="${signerReady ? 'Replace' : 'Enable'} Testnet signing for ${esc(allocation.name)}" title="${signerReady ? 'Signing enabled in this tab. Click to replace the signer.' : 'Enable this allocation wallet to sign Testnet payments in this tab.'}">${svg(signerReady ? 'check' : 'lock', 'signer-icon')}<span>${signerReady ? 'Replace signer' : 'Enable signing'}</span></button>` : `<button class="button primary registry-signer-action" type="button" data-action="connect-allocation-wallet" data-allocation-id="${esc(allocation.allocationId)}">${svg('wallet', 'signer-icon')}<span>Connect wallet</span></button>`}<div class="registry-actions-tools">${linked ? `<button class="button secondary registry-address-action" type="button" data-action="connect-allocation-wallet" data-allocation-id="${esc(allocation.allocationId)}">Change address</button><button class="icon-button" type="button" data-action="refresh-allocation" data-allocation-id="${esc(allocation.allocationId)}" aria-label="Refresh ${esc(allocation.name)} balance" title="Refresh Testnet balance">${svg('refresh')}</button>` : `<span class="registry-actions-hint">Connect a funding wallet to enable signing</span>`}<button class="icon-button danger-icon" type="button" data-action="remove-allocation" data-allocation-id="${esc(allocation.allocationId)}" aria-label="Remove ${esc(allocation.name)}">${svg('trash')}</button></div></div></article>`;
 }
 
+function mainWalletSigningCard() {
+  const account = state.wallet.status === 'CONNECTED' ? state.wallet.account : null;
+  const enabled = Boolean(account && mainWalletSigner?.address === account);
+  return `<section class="card pad main-signer-card" aria-label="Main wallet payroll signing"><div class="main-signer-copy"><div class="card-heading"><div><h2>Main wallet · Employee payroll</h2><p>Salary instructions for registered employees use this main wallet, never a restricted grant wallet.</p></div>${enabled ? status('ALLOW', 'Signing enabled') : status('REVIEW', 'Signing disabled')}</div><p class="small">${account ? `Connected Testnet account: ${esc(compact(account))}` : 'Connect the main XRPL Testnet wallet above.'} Seeds stay only in this browser tab; signing resets on reload or disconnect.</p></div><div class="main-signer-actions"><button class="button ${enabled ? 'secondary' : 'primary'} main-signer-button" type="button" data-action="enable-main-signer" ${account ? '' : 'disabled'}>${svg(enabled ? 'check' : 'lock', 'signer-icon')}<span>${enabled ? 'Replace payroll signer' : 'Enable main wallet signing'}</span></button>${enabled ? '<button class="button secondary" type="button" data-action="disable-main-signer">Disable</button>' : ''}</div></section>`;
+}
+
 function registryDialog() {
   if (state.registryDialog === 'allocation') return `<div class="modal-backdrop"><section class="modal registry-dialog" role="dialog" aria-modal="true" aria-labelledby="allocation-dialog-title"><div class="modal-header"><div><p class="eyebrow">New funding source</p><h2 id="allocation-dialog-title">Add an allocation</h2><p>Name it for the grant, program, department, or public purpose it funds.</p></div><button class="modal-close" type="button" data-action="registry-close" aria-label="Close">×</button></div><form id="allocation-form"><div class="registry-form-body"><div class="form-grid"><div class="field-group"><label for="allocationName">Allocation name</label><input class="field" id="allocationName" name="name" maxlength="80" required placeholder="Healthcare Grant"></div><div class="field-group"><label for="allocationCategory">Type</label><select class="select" id="allocationCategory" name="category"><option>Restricted grant</option><option>Program allocation</option><option>Department budget</option><option>Public allocation</option><option>Payroll allocation</option><option>Other</option></select></div><div class="field-group full"><label for="allocationPurpose">Purpose</label><input class="field" id="allocationPurpose" name="purpose" maxlength="240" placeholder="Medical supplies and approved healthcare operations"></div><div class="field-group full"><label for="allocationRule">Spending restriction</label><input class="field" id="allocationRule" name="spendingRule" maxlength="240" placeholder="Healthcare suppliers only; invoice required"></div><div class="field-group full"><label for="allocationWallet">XRPL Testnet public address <span class="optional">optional</span></label><input class="field code-input" id="allocationWallet" name="walletAddress" maxlength="80" placeholder="r…"><p class="input-note">Paste a public address now, use the currently connected operator address, or connect a wallet after creating the allocation.</p></div></div>${state.wallet.account ? `<button class="inline-wallet-choice" type="button" data-action="use-connected-wallet"><span>${svg('wallet')}</span><span><strong>Use connected ${esc(state.wallet.name || 'XRPL wallet')}</strong><small>${esc(state.wallet.account)}</small></span></button>` : ''}</div><div class="modal-actions"><button class="button secondary" type="button" data-action="registry-close">Cancel</button><button class="button primary" type="submit">Create allocation</button></div></form></section></div>`;
   if (state.registryDialog === 'payee') return `<div class="modal-backdrop"><section class="modal registry-dialog" role="dialog" aria-modal="true" aria-labelledby="payee-dialog-title"><div class="modal-header"><div><p class="eyebrow">New payment recipient</p><h2 id="payee-dialog-title">Add a payee</h2><p>Register a supplier, employee, contractor, or other approved recipient.</p></div><button class="modal-close" type="button" data-action="registry-close" aria-label="Close">×</button></div><form id="payee-form"><div class="registry-form-body"><div class="form-grid"><div class="field-group"><label for="payeeName">Name</label><input class="field" id="payeeName" name="name" maxlength="100" required placeholder="MedTech Supplies"></div><div class="field-group"><label for="payeeType">Payee type</label><select class="select" id="payeeType" name="type"><option value="SUPPLIER">Supplier</option><option value="EMPLOYEE">Employee</option><option value="CONTRACTOR">Contractor</option><option value="OTHER">Other</option></select></div><div class="field-group full"><label for="payeeRole">Service, role, or payment purpose</label><input class="field" id="payeeRole" name="role" maxlength="120" placeholder="Medical equipment supplier"></div><div class="field-group full"><label for="payeeWallet">XRPL Testnet recipient address</label><input class="field code-input" id="payeeWallet" name="walletAddress" maxlength="80" required placeholder="r…"><p class="input-note">Alloc-X checks the XRPL address checksum and rejects duplicates. Identity and wallet ownership are not checked.</p></div></div></div><div class="modal-actions"><button class="button secondary" type="button" data-action="registry-close">Cancel</button><button class="button primary" type="submit">Register payee</button></div></form></section></div>`;
@@ -413,13 +425,81 @@ function voicePanel() {
   return `<section class="voice-panel review" aria-live="polite"><span>${svg('mic')}</span><div class="voice-review"><span class="voice-overline">Voice transcript · review required</span><strong>${esc(instruction.transcript)}</strong><p>This transcript is recorded with your consent. Confirm it before Alloc-X can interpret it; confirmation still cannot sign or settle a payment.</p></div><div class="voice-actions">${button('Discard', 'voice-discard', 'secondary')}<button class="button primary" type="button" data-action="voice-confirm">Confirm instruction ${svg('arrow', 'nav-icon')}</button></div></section>`;
 }
 
-function payments() { const payments = state.data.payments; const active = state.data.capabilities.canSettle; return `<section class="page-heading"><div><p class="eyebrow">Payment operations</p><h1>Payments</h1><p>Each item is built from server-owned references, then bound to a signed Approval Layer outcome.</p></div>${button(`${svg('plus', 'nav-icon')} Create payment`, 'route-new-payment', 'primary')}</section><section class="card pad"><div class="card-heading"><div><h2>Payment queue</h2><p>${active ? 'Independent signing, ledger validation, and reconciliation are available.' : 'Settlement is intentionally unavailable in this local workspace.'}</p></div><span class="status neutral">${payments.length} recorded</span></div>${payments.length ? paymentTable(payments) : empty('receipt', 'No payment records', 'Create a payment to see its controls, receipt, and lifecycle timeline here.')}</section>`; }
+function ledgerSourceWallets() {
+  const sources = [];
+  if (state.wallet.network === 'testnet' && state.wallet.account) sources.push({ address: state.wallet.account, name: 'Main wallet' });
+  for (const allocation of state.registry.allocations) if (allocation.walletAddress) sources.push({ address: allocation.walletAddress, name: allocation.name });
+  // The connected main-wallet label takes precedence when a wallet is also registered as an allocation.
+  return sources.filter((source, index) => sources.findIndex((candidate) => candidate.address === source.address) === index);
+}
+
+function ledgerHistoryRows() {
+  const rows = ledgerSourceWallets().flatMap((source) => (state.ledgerHistoryByAccount[source.address]?.rows || []).map((row) => ({ ...row, sourceName: source.name })));
+  return [...new Map(rows.map((row) => [row.hash, row])).values()].sort((a, b) => (Date.parse(b.timestamp || '') || 0) - (Date.parse(a.timestamp || '') || 0));
+}
+
+function ledgerPaymentTable(rows) {
+  return `<div class="table-wrap"><table class="table"><thead><tr><th>Recipient</th><th>Source wallet</th><th>Amount</th><th>Validated</th><th>Ledger</th><th></th></tr></thead><tbody>${rows.map((row) => {
+    const payee = state.registry.payees.find((item) => item.walletAddress === row.destination);
+    return `<tr><td><span class="main-cell">${esc(payee?.name || compact(row.destination))}</span><span class="sub-cell">${esc(compact(row.hash))}</span></td><td>${esc(row.sourceName)}</td><td class="amount">${money(row.amountXrp)}</td><td>${row.timestamp ? esc(when(row.timestamp)) : 'Time unavailable'}</td><td>${row.ledgerIndex === null ? '—' : esc(row.ledgerIndex)}</td><td><a class="table-link" href="https://testnet.xrpl.org/transactions/${esc(row.hash)}" target="_blank" rel="noopener noreferrer">View on XRPL</a></td></tr>`;
+  }).join('')}</tbody></table></div>`;
+}
+
+async function refreshLedgerHistory(loadMore = false) {
+  if (state.ledgerHistoryLoading) return;
+  const sources = ledgerSourceWallets();
+  if (!sources.length) { state.ledgerHistoryError = null; if (state.route === 'payments') render(); return; }
+  const Client = globalThis.xrpl?.Client;
+  if (!Client) { state.ledgerHistoryError = 'XRPL Testnet client is unavailable. Reload the workspace.'; if (state.route === 'payments') render(); return; }
+  state.ledgerHistoryLoading = true;
+  state.ledgerHistoryError = null;
+  if (state.route === 'payments') render();
+  const client = new Client('wss://s.altnet.rippletest.net:51233/');
+  const failures = [];
+  try {
+    await client.connect();
+    for (const source of sources) {
+      const previous = state.ledgerHistoryByAccount[source.address];
+      if (loadMore && !previous?.marker) continue;
+      try {
+        const query = { command: 'account_tx', account: source.address, ledger_index_min: -1, ledger_index_max: -1, binary: false, forward: false, limit: 200 };
+        if (loadMore) query.marker = previous.marker;
+        const result = (await client.request(query))?.result;
+        if (!Array.isArray(result?.transactions)) throw new Error('The ledger did not return a transaction list.');
+        const rows = outgoingNativePayments(result.transactions, source.address);
+        const merged = loadMore ? [...(previous?.rows || []), ...rows] : rows;
+        state.ledgerHistoryByAccount[source.address] = { rows: [...new Map(merged.map((row) => [row.hash, row])).values()], marker: result.marker || null };
+      } catch (error) { failures.push(`${source.name}: ${error.message}`); }
+    }
+    if (failures.length) state.ledgerHistoryError = failures.join(' ');
+  } catch (error) { state.ledgerHistoryError = error.message || 'XRPL Testnet ledger history is currently unavailable.'; }
+  finally {
+    if (client.isConnected()) await client.disconnect().catch(() => {});
+    state.ledgerHistoryLoading = false;
+    if (state.route === 'payments') render();
+  }
+}
+
+function payments() {
+  const recorded = state.data.payments;
+  const queue = recorded.filter((payment) => payment.state !== 'VALIDATED');
+  const completed = recorded.filter((payment) => payment.state === 'VALIDATED');
+  const sources = ledgerSourceWallets();
+  const history = ledgerHistoryRows();
+  const hasMore = sources.some((source) => state.ledgerHistoryByAccount[source.address]?.marker);
+  return `<section class="page-heading"><div><p class="eyebrow">Payment operations</p><h1>Payments</h1><p>Queued decisions, recorded completions, and validated transactions from your XRPL Testnet wallet sources.</p></div>${button(`${svg('plus', 'nav-icon')} Create payment`, 'route-agent', 'primary')}</section>
+    ${mainWalletSigningCard()}
+    <section class="card pad payment-history-section"><div class="card-heading"><div><h2>Queue, review and decisions</h2><p>Pending, blocked or awaiting-settlement payment records.</p></div><span class="status neutral">${queue.length} recorded</span></div>${queue.length ? paymentTable(queue) : empty('receipt', 'No queued payments', 'Payments needing review or settlement appear here.')}</section>
+    <section class="card pad payment-history-section"><div class="card-heading"><div><h2>Completed Alloc-X payments</h2><p>Validated payments with a signed approval and receipt available to this workspace.</p></div><span class="status neutral">${completed.length} recorded</span></div>${completed.length ? paymentTable(completed) : empty('receipt', 'No completed workspace records', 'Completed decisions appear here. Ledger history also survives a server restart.')}</section>
+    <section class="card pad payment-history-section"><div class="card-heading"><div><h2>Validated XRPL Testnet history</h2><p>Read-only outgoing XRP transfers from main and registered allocation wallets. Transfers without matching receipts are not necessarily Alloc-X agent actions.</p></div>${button(state.ledgerHistoryLoading ? 'Loading…' : 'Refresh history', 'ledger-refresh', 'secondary', state.ledgerHistoryLoading ? 'disabled' : '')}</div>
+    ${state.ledgerHistoryError ? `<div class="banner wallet-banner attention" role="status">${svg('alert')}<div><strong>Ledger history needs attention</strong>${esc(state.ledgerHistoryError)}</div></div>` : ''}
+    ${!sources.length ? empty('wallet', 'No Testnet wallets', 'Connect your main wallet or register allocation addresses to read historical transfers.') : history.length ? ledgerPaymentTable(history) : state.ledgerHistoryLoading ? '<div class="ledger-loading"><span class="loader"></span>Reading validated XRPL ledger transactions…</div>' : empty('receipt', 'No validated outgoing XRP payments found', 'Completed native XRP transfers on Testnet appear here.')}
+    ${hasMore ? `<div class="ledger-history-footer">${button(state.ledgerHistoryLoading ? 'Loading older…' : 'Load older transactions', 'ledger-load-more', 'secondary', state.ledgerHistoryLoading ? 'disabled' : '')}</div>` : ''}</section>`;
+}
 
 function paymentTable(payments) { return `<div class="table-wrap"><table class="table"><thead><tr><th>Payment</th><th>Allocation</th><th>Amount</th><th>Security outcome</th><th>Lifecycle</th><th></th></tr></thead><tbody>${payments.map((payment) => `<tr><td><span class="main-cell">${esc(paymentTitle(payment))}</span><span class="sub-cell">${esc(payment.paymentId)}</span></td><td>${esc(paymentAllocationName(payment))}</td><td class="amount">${money(payment.intent.amount)}</td><td>${status(payment.decision.decision.outcome)}</td><td><span class="status neutral">${esc(labelState(payment.state))}</span></td><td><button class="table-link" data-action="open-payment" data-payment-id="${esc(payment.paymentId)}">Open <span aria-hidden="true">→</span></button></td></tr>`).join('')}</tbody></table></div>`; }
 
-function newPayment() { const refs = state.data.paymentReferences; const live = state.data.capabilities.canSettle; return `<section class="page-heading"><div><p class="eyebrow">Protected payment creation</p><h1>Prepare a payment</h1><p>Select the approved obligation and allocation. Amount, destination, asset, and evidence are resolved only by the server.</p></div>${button('Cancel', 'route-payments')}</section><div class="grid two" style="grid-template-columns:minmax(0,1.45fr) minmax(290px,.8fr)"><form class="card pad" id="payment-form"><div class="card-heading"><div><h2>Authoritative references</h2><p>Changing a selection never changes protected payment fields in the browser.</p></div><span class="status neutral">Draft</span></div><div class="form-grid"><div class="field-group full"><label for="obligationId">Obligation</label><select class="select" id="obligationId" name="obligationId">${refs.obligations.map((obligation) => `<option value="${esc(obligation.obligationId)}">${esc(obligation.displayName)} · ${money(obligation.amount)}</option>`).join('')}</select><p class="input-note">The obligation fixes purpose, due date, amount, asset, and evidence reference.</p></div><div class="field-group"><label for="allocationId">Allocation envelope</label><select class="select" id="allocationId" name="allocationId">${refs.allocations.map((allocation) => `<option value="${esc(allocation.allocationId)}">${esc(allocation.displayName)}</option>`).join('')}</select></div><div class="field-group"><label for="beneficiaryId">Approved beneficiary</label><select class="select" id="beneficiaryId" name="beneficiaryId">${refs.beneficiaries.map((beneficiary) => `<option value="${esc(beneficiary.beneficiaryId)}">${esc(beneficiary.label)}</option>`).join('')}</select></div><div class="field-group full"><label>Protected payment fields</label><div class="reference-preview" id="reference-preview"></div></div></div><div class="card-divider"></div><div class="row"><span class="small">Creating this record reserves available capacity and starts an independent security evaluation.</span><button class="button primary" type="submit" ${state.busy ? 'disabled' : ''}>${state.busy ? 'Creating…' : `Create and assess ${svg('arrow', 'nav-icon')}`}</button></div></form><aside class="card pad security-panel"><div class="card-heading"><div><h2>What happens next</h2><p>Payment state is not decided by this screen.</p></div></div><div class="control"><span class="control-icon">1</span><div><b>Canonical intent</b><span>Server resolves approved records and reserves capacity.</span></div></div><div class="control"><span class="control-icon">2</span><div><b>Approval Layer evaluation</b><span>Policy, evidence, beneficiary, and risk gates decide allow, review, or block.</span></div></div><div class="control"><span class="control-icon">3</span><div><b>Durable receipt</b><span>Decision and audit event are written before the result is released.</span></div></div><div class="control"><span class="control-icon">4</span><div><b>Independent settlement</b><span>${live ? 'Signer quorum, validated ledger execution, and independent reconciliation are active.' : 'Not available until the signer and ledger services are connected.'}</span></div></div></aside></div>`; }
-
-function agentWorkspace() { const session = state.agentSession; const actions = session?.actions || []; const capability = state.data.agent; return `<section class="page-heading"><div><p class="eyebrow">Policy-bound payment execution</p><h1>Allocation agent</h1><p>Tell Alloc-X who to pay and the XRP amount. It selects the eligible registered funding source, obtains Approval Layer clearance, signs with that allocation's enabled Testnet signer, and verifies settlement on XRPL.</p></div>${status('ALLOW', state.busy ? 'Executing' : 'Ready')}</section><div class="grid two" style="grid-template-columns:minmax(0,1.35fr) minmax(300px,.85fr)"><section class="card pad"><div class="card-heading"><div><h2>Payment instruction</h2><p>Use a registered payee name and an XRP amount. Alloc-X resolves the rest from your workspace.</p></div>${svg('agent', 'nav-icon')}</div><form id="agent-form"><div class="field-group"><label for="agentMessage">Instruction</label><input class="field" id="agentMessage" name="message" maxlength="500" required placeholder="Pay Goodwill Clinic 200 XRP" value=""><p class="input-note">${esc(capability.commandFormat)}</p></div><div class="card-divider"></div><div class="row"><span class="small">An ALLOW decision activates the selected allocation's in-memory Testnet signer; the main operator wallet stays connected.</span><button class="button primary" type="submit" ${state.busy ? 'disabled' : ''}>${state.busy ? 'Executing…' : `Pay with Alloc-X ${svg('arrow', 'nav-icon')}`}</button></div></form>${actions.length ? `<div class="card-divider"></div><div class="card-heading"><div><h2>Voice instruction trace</h2><p>Confirmed transcript history</p></div><span class="status neutral">${actions.length} steps</span></div><div class="timeline">${actions.slice(-4).map((action) => `<div class="event ${action.name === 'payment.draft' ? 'allowed' : action.name === 'evidence.request' ? 'review' : ''}"><div class="event-title">${esc(action.name.replaceAll('.', ' · '))}</div><div class="event-copy">${esc(action.detail)}</div><div class="event-time">${when(action.occurredAt)} · input ${esc(compact(action.inputDigest))}</div></div>`).join('')}</div>` : empty('agent', 'Ready for a payment instruction', 'Type or record a payment instruction using a registered payee and the XRP amount.')}</section><aside class="card pad security-panel"><div class="card-heading"><div><h2>Execution boundary</h2><p>Allocation secrets remain only in the current browser tab's memory.</p></div></div><div class="control"><span class="control-icon">1</span><div><b>Registered records only</b><span>The destination must match a checksum-validated payee in this workspace.</span></div></div><div class="control"><span class="control-icon">2</span><div><b>Signed Approval Layer decision</b><span>Policy, balance, destination, risk, and active security stops are checked before signing.</span></div></div><div class="control"><span class="control-icon">3</span><div><b>Autonomous allocation signing</b><span>Only the signer for the selected Testnet allocation signs the exact authorized transaction.</span></div></div><div class="control"><span class="control-icon">4</span><div><b>Validated completion</b><span>A payment is recorded only after XRPL reports a final tesSUCCESS result matching the authorized fields.</span></div></div></aside></div>`; }
+function agentWorkspace() { const session = state.agentSession; const actions = session?.actions || []; const capability = state.data.agent; return `<section class="page-heading"><div><p class="eyebrow">Policy-bound payment execution</p><h1>Allocation agent</h1><p>Tell Alloc-X who to pay and the XRP amount. Grant payments use eligible allocations; explicit salary payments to registered employees use your main wallet. Every transfer requires Approval Layer clearance and an enabled Testnet signer.</p></div>${status('ALLOW', state.busy ? 'Executing' : 'Ready')}</section>${mainWalletSigningCard()}<div class="grid two" style="grid-template-columns:minmax(0,1.35fr) minmax(300px,.85fr)"><section class="card pad"><div class="card-heading"><div><h2>Payment instruction</h2><p>Name a registered payee and the XRP amount. Include “salary” for a registered employee to use the main wallet.</p></div>${svg('agent', 'nav-icon')}</div><form id="agent-form"><div class="field-group"><label for="agentMessage">Instruction</label><input class="field" id="agentMessage" name="message" maxlength="500" required placeholder="Pay Goodwill Clinic 200 XRP" value=""><p class="input-note">${esc(capability.commandFormat)}</p></div><div class="card-divider"></div><div class="row"><span class="small">An ALLOW decision permits only the selected in-memory Testnet signer. Employee salary instructions select the main wallet.</span><button class="button primary" type="submit" ${state.busy ? 'disabled' : ''}>${state.busy ? 'Executing…' : `Pay with Alloc-X ${svg('arrow', 'nav-icon')}`}</button></div></form>${actions.length ? `<div class="card-divider"></div><div class="card-heading"><div><h2>Voice instruction trace</h2><p>Confirmed transcript history</p></div><span class="status neutral">${actions.length} steps</span></div><div class="timeline">${actions.slice(-4).map((action) => `<div class="event ${action.name === 'payment.draft' ? 'allowed' : action.name === 'evidence.request' ? 'review' : ''}"><div class="event-title">${esc(action.name.replaceAll('.', ' · '))}</div><div class="event-copy">${esc(action.detail)}</div><div class="event-time">${when(action.occurredAt)} · input ${esc(compact(action.inputDigest))}</div></div>`).join('')}</div>` : empty('agent', 'Ready for a payment instruction', 'Type or record a payment instruction using a registered payee and the XRP amount.')}</section><aside class="card pad security-panel"><div class="card-heading"><div><h2>Execution boundary</h2><p>Allocation secrets remain only in the current browser tab's memory.</p></div></div><div class="control"><span class="control-icon">1</span><div><b>Registered records only</b><span>The destination must match a checksum-validated payee in this workspace.</span></div></div><div class="control"><span class="control-icon">2</span><div><b>Signed Approval Layer decision</b><span>Policy, balance, destination, risk, and active security stops are checked before signing.</span></div></div><div class="control"><span class="control-icon">3</span><div><b>Autonomous allocation signing</b><span>Only the selected grant signer, or the main signer for employee payroll, signs the exact authorized transaction.</span></div></div><div class="control"><span class="control-icon">4</span><div><b>Validated completion</b><span>A payment is recorded only after XRPL reports a final tesSUCCESS result matching the authorized fields.</span></div></div></aside></div>`; }
 
 function cashRunway() { return `<section class="page-heading"><div><p class="eyebrow">Advisory cash planning</p><h1>Cash runway</h1><p>Forecasts will be calculated only from a connected treasury and recorded inflows, obligations, reserves, and payroll rules.</p></div>${status('REVIEW', 'Configuration required')}</section><div class="banner wallet-banner attention">${svg('shield')}<div><strong>No estimated money values are displayed</strong>Connect the Testnet treasury and configure authoritative planning inputs before Alloc-X generates a runway.</div>${state.wallet.status === 'CONNECTED' ? '' : button('Connect wallet', 'wallet-connect', 'primary')}</div><section class="card pad">${empty('funds', 'Planning inputs are not configured', 'Add verified inflows, obligations and protection rules to generate a traceable forecast from the live Testnet balance.')}</section>`; }
 
@@ -490,8 +570,6 @@ function paymentAllocationName(payment) { return payment.display?.allocationName
 function paymentBeneficiaryName(payment) { return payment.display?.payeeName || beneficiaryName(payment.intent.beneficiaryId); }
 function labelState(value) { return ({ AWAITING_SETTLEMENT: 'Awaiting independent settlement', REVIEW_REQUIRED: 'Human review required', BLOCKED: 'Blocked', VALIDATED: 'Ledger validated — awaiting reconciliation', RECONCILED: 'Independently reconciled', RETRYABLE_FAILURE: 'Settlement retry required', FAILED: 'Settlement failed' })[value] || value; }
 
-function updateReferencePreview() { const form = document.querySelector('#payment-form'); if (!form || !state.data) return; const obligation = state.data.paymentReferences.obligations.find((item) => item.obligationId === form.obligationId.value); if (form.beneficiaryId.value !== obligation.beneficiaryId) form.beneficiaryId.value = obligation.beneficiaryId; const beneficiary = state.data.paymentReferences.beneficiaries.find((item) => item.beneficiaryId === form.beneficiaryId.value); const allocation = state.data.paymentReferences.allocations.find((item) => item.allocationId === form.allocationId.value); const preview = document.querySelector('#reference-preview'); preview.innerHTML = `<div class="row"><span>Amount (authoritative)</span><b class="amount">${money(obligation.amount)}</b></div><div class="row"><span>Beneficiary destination</span><b>Approved ${esc(beneficiary.label)} wallet · v${beneficiary.walletVersion}</b></div><div class="row"><span>Source allocation</span><b>${esc(allocation.displayName)}</b></div><div class="row"><span>Evidence requirement</span><b>Verified invoice attached</b></div>`; }
-
 function scrollToPageStart() {
   // Keep route changes from inheriting the previous page's document scroll position.
   // The sidebar has its own scroll container so its long navigation never shifts the main view.
@@ -500,10 +578,8 @@ function scrollToPageStart() {
 
 function bind() {
   if (voiceCapture && state.voiceState === 'LISTENING') updateVoicePreview(voiceCapture);
-  document.querySelectorAll('[data-route]').forEach((element) => element.addEventListener('click', (event) => { event.preventDefault(); state.mobileMenuOpen = false; state.route = element.dataset.route; state.activePaymentId = null; state.activeBeneficiaryId = null; render(); scrollToPageStart(); if (state.route === 'allocations') refreshAllocationBalances(); }));
+  document.querySelectorAll('[data-route]').forEach((element) => element.addEventListener('click', (event) => { event.preventDefault(); state.mobileMenuOpen = false; state.route = element.dataset.route; state.activePaymentId = null; state.activeBeneficiaryId = null; render(); scrollToPageStart(); if (state.route === 'allocations') refreshAllocationBalances(); if (state.route === 'payments') void refreshLedgerHistory(); }));
   document.querySelectorAll('[data-action]').forEach((element) => element.addEventListener('click', onAction));
-  const form = document.querySelector('#payment-form');
-  if (form) { form.addEventListener('submit', submitPayment); form.addEventListener('change', updateReferencePreview); updateReferencePreview(); }
   const agentForm = document.querySelector('#agent-form');
   if (agentForm) agentForm.addEventListener('submit', submitAgentInstruction);
   const freezeForm = document.querySelector('#emergency-freeze-form');
@@ -563,6 +639,7 @@ async function onAction(event) {
   if (action === 'wallet-disconnect') {
     operatorSessionEpoch += 1;
     forgetOperatorWallet();
+    mainWalletSigner = null;
     try { await walletManager?.disconnect(); } catch (error) { toast('Wallet disconnect failed', error.message, true); }
     state.wallet = { status: 'DISCONNECTED', account: null, name: null, balance: null, error: null };
     render();
@@ -585,6 +662,10 @@ async function onAction(event) {
     return;
   }
   if (action === 'enable-allocation-signer') return enableAllocationSigner(event.currentTarget.dataset.allocationId);
+  if (action === 'enable-main-signer') return enableMainWalletSigner();
+  if (action === 'disable-main-signer') { mainWalletSigner = null; render(); toast('Main wallet signing disabled', 'Autonomous payroll signing is now disabled for this tab.'); return; }
+  if (action === 'ledger-refresh') return refreshLedgerHistory();
+  if (action === 'ledger-load-more') return refreshLedgerHistory(true);
   if (action === 'refresh-allocation') return refreshAllocationBalance(event.currentTarget.dataset.allocationId, true);
   if (action === 'remove-allocation') return removeRegisteredAllocation(event.currentTarget.dataset.allocationId);
   if (action === 'remove-payee') return removeRegisteredPayee(event.currentTarget.dataset.payeeId);
@@ -593,8 +674,8 @@ async function onAction(event) {
   if (action === 'voice-discard') { state.voiceInstruction = null; state.voiceTranscript = ''; state.voiceState = 'IDLE'; render(); return; }
   if (action === 'reload') { await load(); await refreshWalletBalance(); return refreshAllocationBalances(); }
   if (action === 'route-allocations') { state.route = 'allocations'; render(); scrollToPageStart(); refreshAllocationBalances(); return; }
-  if (action === 'route-new-payment') { state.route = 'new-payment'; render(); scrollToPageStart(); return; }
-  if (action === 'route-payments') { state.route = 'payments'; render(); scrollToPageStart(); return; }
+  if (action === 'route-new-payment' || action === 'route-agent') { state.route = 'agent'; render(); scrollToPageStart(); return; }
+  if (action === 'route-payments') { state.route = 'payments'; render(); scrollToPageStart(); void refreshLedgerHistory(); return; }
   if (action === 'route-beneficiaries') { state.route = 'beneficiaries'; render(); scrollToPageStart(); return; }
   if (action === 'open-payment') { state.activePaymentId = event.currentTarget.dataset.paymentId; state.route = 'payment-detail'; render(); scrollToPageStart(); return; }
   if (action === 'open-beneficiary') { state.activeBeneficiaryId = event.currentTarget.dataset.beneficiaryId; state.route = 'beneficiary-detail'; render(); scrollToPageStart(); return; }
@@ -684,8 +765,6 @@ async function refreshAllocationBalances() {
   await Promise.all(linked.map((allocation) => refreshAllocationBalance(allocation.allocationId)));
 }
 
-async function submitPayment(event) { event.preventDefault(); if (state.busy) return; const form = event.currentTarget; state.busy = true; render(); try { const response = await api('/api/payments', { method: 'POST', body: JSON.stringify({ obligationId: form.obligationId.value, allocationId: form.allocationId.value, beneficiaryId: form.beneficiaryId.value }) }); state.data = await api('/api/bootstrap'); state.activePaymentId = response.payment.paymentId; state.route = 'payment-detail'; toast('Payment assessment recorded', response.message); } catch (error) { toast(/insufficient|allocation.*capacity|reserve|available balance|funds/i.test(error.message) ? 'Selected funding source cannot cover this payment' : 'Payment could not be created', error.message, true); } finally { state.busy = false; render(); } }
-
 async function submitAgentInstruction(event) {
   event.preventDefault();
   if (state.busy) return;
@@ -700,19 +779,24 @@ async function submitAgentInstruction(event) {
 async function executeAgentPayment(message) {
   const prepared = await api('/api/agent/payments/prepare', {
     method: 'POST',
-    body: JSON.stringify({ message, registry: { allocations: state.registry.allocations, payees: state.registry.payees } }),
+    body: JSON.stringify({ message, ...(state.wallet.status === 'CONNECTED' && state.wallet.account ? { mainWalletAddress: state.wallet.account } : {}), registry: { allocations: state.registry.allocations, payees: state.registry.payees } }),
   });
   toast('Payment allowed — Alloc-X is executing', prepared.message);
   const sourceAccount = prepared.payment?.sourceAccount;
-  const allocationWallet = allocationSignerWallets.get(sourceAccount);
-  if (!allocationWallet) {
-    state.route = 'allocations';
+  const payroll = prepared.payment?.sourceKind === 'MAIN_WALLET_PAYROLL';
+  const signer = payroll
+    ? (mainWalletSigner?.address === sourceAccount && state.wallet.account === sourceAccount ? mainWalletSigner.wallet : null)
+    : allocationSignerWallets.get(sourceAccount);
+  if (!signer) {
+    state.route = payroll ? 'agent' : 'allocations';
     render();
-    throw new Error(`Alloc-X selected ${prepared.payment?.allocationName || 'an allocation'}, but autonomous signing is not enabled for ${compact(sourceAccount)}. Click Enable agent signing on that allocation and enter its Testnet secret.`);
+    throw new Error(payroll
+      ? 'Alloc-X selected the main wallet for employee salaries. Connect the main Testnet wallet and click Enable main wallet signing in the Allocation Agent first.'
+      : `Alloc-X selected ${prepared.payment?.allocationName || 'an allocation'}, but autonomous signing is not enabled for ${compact(sourceAccount)}. Enable signing for that allocation first.`);
   }
-  const signed = allocationWallet.sign(prepared.transaction);
+  const signed = signer.sign(prepared.transaction);
   if (!signed?.tx_blob || !/^[A-F0-9]+$/.test(signed.tx_blob)) throw new Error('The allocation signer could not produce a valid XRPL transaction.');
-  toast('Signed by the selected allocation', 'Submitting the exact Approval Layer-authorized transaction to XRPL Testnet.');
+  toast(payroll ? 'Signed by main payroll wallet' : 'Signed by the selected allocation', 'Submitting the exact Approval Layer-authorized transaction to XRPL Testnet.');
   const transactionHash = await submitSignedAllocationTransaction(signed.tx_blob);
   toast('Submitted to XRPL Testnet', `Waiting for independent ledger verification: ${compact(transactionHash)}`);
   const completed = await api('/api/agent/payments/complete', {
@@ -723,6 +807,7 @@ async function executeAgentPayment(message) {
   state.activePaymentId = completed.payment.paymentId;
   state.route = 'payment-detail';
   await Promise.all([refreshWalletBalance(), refreshAllocationBalances()]);
+  void refreshLedgerHistory();
   toast('Payment completed', completed.message);
 }
 
@@ -740,6 +825,24 @@ async function submitSignedAllocationTransaction(signedTransactionBlob) {
     return transactionHash;
   } finally {
     if (client.isConnected()) await client.disconnect().catch(() => {});
+  }
+}
+
+function enableMainWalletSigner() {
+  const address = state.wallet.status === 'CONNECTED' && state.wallet.network === 'testnet' ? state.wallet.account : null;
+  if (!address) return toast('Main wallet required', 'Connect and verify the main wallet on XRPL Testnet first.', true);
+  const secret = globalThis.prompt("Enable autonomous payroll signing for the connected main XRPL Testnet wallet.\n\nUse a dedicated Testnet account, never a mainnet or high-value seed. The seed remains only in this browser tab.\n\nEnter the connected wallet's Testnet seed:");
+  if (!secret) return;
+  try {
+    const Wallet = globalThis.xrpl?.Wallet;
+    if (!Wallet?.fromSeed) throw new Error('XRPL signing support did not load. Reload and try again.');
+    const wallet = Wallet.fromSeed(secret.trim());
+    if (wallet.address !== address) throw new Error('The supplied seed does not match the connected main Testnet wallet.');
+    mainWalletSigner = { address, wallet };
+    render();
+    toast('Main wallet signing enabled', 'Explicit employee salary instructions may now be signed from this main Testnet wallet.');
+  } catch (error) {
+    toast('Main wallet signing unavailable', error.message, true);
   }
 }
 

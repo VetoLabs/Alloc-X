@@ -55,6 +55,7 @@ const checks = [
       "services/policy-registry/test/policy-registry.test.ts",
     ],
   ],
+  ["console tests", ["--test", "--test-isolation=none", "apps/console/test/server.test.ts", "apps/console/test/workspace-registry.test.ts", "apps/console/test/wallet-session.test.ts", "apps/console/test/ledger-history.test.js"]],
   [
     "integration tests",
     [

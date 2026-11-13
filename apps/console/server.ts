@@ -79,7 +79,7 @@ type ValidatedTestnetPayment = {
 
 type WorkspaceAllocationInput = { readonly allocationId: string; readonly name: string; readonly category: string; readonly purpose: string; readonly spendingRule: string; readonly walletAddress: string };
 type WorkspacePayeeInput = { readonly payeeId: string; readonly name: string; readonly type: string; readonly role: string; readonly walletAddress: string; readonly status: string; readonly createdAt: string };
-type AgentPaymentRequest = { readonly message: string; readonly sourceAccount?: string; readonly registry: { readonly allocations: readonly WorkspaceAllocationInput[]; readonly payees: readonly WorkspacePayeeInput[] } };
+type AgentPaymentRequest = { readonly message: string; readonly sourceAccount?: string; readonly mainWalletAddress?: string; readonly registry: { readonly allocations: readonly WorkspaceAllocationInput[]; readonly payees: readonly WorkspacePayeeInput[] } };
 
 type StoredPayments = { readonly contractVersion: "1.0"; readonly payments: readonly PaymentView[] };
 
@@ -214,7 +214,7 @@ export async function createConsoleServer(options: ConsoleServerOptions = {}): P
           beneficiaryEvents: beneficiaries.notifications(organizationId),
           signerHealth: options.settlement ? { status: "HEALTHY", quorum: "Independent signing path configured", detail: "Ledger submission and reconciliation are available." } : { status: "WALLET_AUTHORIZATION", quorum: "Connected treasury wallet", detail: "Testnet payments are authorized in the connected XRPL wallet, then independently validated before Alloc-X records settlement." },
           capabilities: { canCreatePayment: true, canSettle: true, settlementMessage: options.settlement ? "Independent signing, validation, and reconciliation are active." : "Connected XRPL wallets can authorize Testnet settlement; Alloc-X validates the final ledger result." },
-          agent: { enabled: true, commandFormat: "Tell Alloc-X the registered payee and XRP amount, for example: pay Goodwill Clinic 200 XRP", safety: "The agent resolves registered records, obtains a signed Approval Layer decision, prepares a bounded transaction, requests wallet authorization, and records only validated Testnet settlement." },
+          agent: { enabled: true, commandFormat: "For grant payments: pay Goodwill Clinic 20 XRP. For payroll: pay Alice Johnson 20 XRP salary (registered employee, main-wallet signer required).", safety: "The agent resolves registered records, obtains a signed Approval Layer decision, prepares a bounded transaction, requests wallet authorization, and records only validated Testnet settlement." },
           operations: operationalMonitor.snapshot(),
           mainnetActivation: {
             ...mainnetActivation.readiness(),
@@ -323,15 +323,30 @@ export async function createConsoleServer(options: ConsoleServerOptions = {}): P
         const authorizationId = `authorization_${token}`;
         const preparation: AgentPaymentPreparation = Object.freeze({ authorizationId, instruction: body.message, payeeName: resolved.payee.name, allocationName: resolved.allocation.name, intent, intentDigest, prepared, receipt: approvalReceipt, expiresAt: intent.requestedExecutionWindow.expiresAt });
         agentPreparations.set(authorizationId, preparation);
+        // Persist approved, not-yet-settled agent instructions in the queue.
+        // They only become validated completions after an independent XRPL check.
+        const pendingPayment: PaymentView = Object.freeze({
+          paymentId: `pay_${intent.intentId.slice(3)}`,
+          createdAt: preparedAt,
+          intent,
+          intentDigest,
+          state: "AWAITING_SETTLEMENT",
+          decision: approvalReceipt.signedDecision,
+          checks: approvalReceipt.evaluation.checks,
+          auditEventId: approvalReceipt.auditEvent.eventId,
+          display: { instruction: body.message, payeeName: resolved.payee.name, allocationName: resolved.allocation.name },
+        });
+        payments = [pendingPayment, ...payments];
+        await savePayments(paymentStore, payments);
         const authorizationToken = Buffer.from(JSON.stringify(preparation)).toString("base64url");
         const authorization = { token: authorizationToken, signature: signer.sign(authorizationToken), keyId: signer.keyId };
         return json(response, 201, {
           authorizationId,
           authorization,
           transaction: prepared.transaction,
-          payment: { amount: intent.amount, asset: intent.asset, payeeName: preparation.payeeName, allocationName: preparation.allocationName, sourceAccount, destination: resolved.payee.walletAddress },
+          payment: { amount: intent.amount, asset: intent.asset, payeeName: preparation.payeeName, allocationName: preparation.allocationName, sourceKind: resolved.sourceKind, sourceAccount, destination: resolved.payee.walletAddress },
           approval: approvalReceipt.signedDecision,
-          message: `Approval Layer allowed ${intent.amount} XRP from ${preparation.allocationName} to ${preparation.payeeName}. Alloc-X selected the eligible allocation and bound the exact transaction for autonomous Testnet signing.`,
+          message: `Approval Layer allowed ${intent.amount} XRP from ${preparation.allocationName} to ${preparation.payeeName}. Alloc-X selected the ${resolved.sourceKind === "MAIN_WALLET_PAYROLL" ? "main wallet for employee payroll" : "eligible allocation"} and bound the exact transaction for autonomous Testnet signing.`,
         });
       }
       if (request.method === "POST" && url.pathname === "/api/agent/payments/complete") {
@@ -379,7 +394,7 @@ export async function createConsoleServer(options: ConsoleServerOptions = {}): P
           ...(issued.link ? { receiptLinkDigest: issued.link.linkDigest } : {}),
           display: { instruction: preparation.instruction, payeeName: preparation.payeeName, allocationName: preparation.allocationName },
         });
-        payments = [payment, ...payments];
+        payments = [payment, ...payments.filter((item) => item.paymentId !== paymentId)];
         await savePayments(paymentStore, payments);
         agentPreparations.delete(body.authorizationId);
         return json(response, 201, { payment, message: `${preparation.payeeName} was paid ${preparation.intent.amount} XRP. XRPL validated the transaction in ledger ${validated.ledgerIndex}.` });
@@ -635,18 +650,20 @@ function workspaceEvaluationContext(intent: PaymentIntent, validatedBalance: str
 function parseAgentPaymentRequest(value: unknown): AgentPaymentRequest {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError("Agent payment instruction is required.");
   const record = value as Record<string, unknown>;
-  if (Object.keys(record).some((key) => !["message", "sourceAccount", "registry"].includes(key)) || typeof record.message !== "string" || (record.sourceAccount !== undefined && typeof record.sourceAccount !== "string") || !record.registry || typeof record.registry !== "object" || Array.isArray(record.registry)) throw new TypeError("Agent payment instruction is invalid.");
+  if (Object.keys(record).some((key) => !["message", "sourceAccount", "mainWalletAddress", "registry"].includes(key)) || typeof record.message !== "string" || (record.sourceAccount !== undefined && typeof record.sourceAccount !== "string") || (record.mainWalletAddress !== undefined && typeof record.mainWalletAddress !== "string") || !record.registry || typeof record.registry !== "object" || Array.isArray(record.registry)) throw new TypeError("Agent payment instruction is invalid.");
   const message = record.message.trim().replace(/\s+/g, " ");
   if (!message || message.length > 500) throw new TypeError("Agent instruction must be between 1 and 500 characters.");
   const sourceAccount = typeof record.sourceAccount === "string" ? record.sourceAccount : undefined;
-  if (sourceAccount !== undefined && !isValidClassicAddress(sourceAccount)) throw new TypeError("The selected XRPL Testnet allocation wallet is invalid.");
+  if (sourceAccount !== undefined && !isValidClassicAddress(sourceAccount)) throw new TypeError("The selected XRPL Testnet source wallet is invalid.");
+  const mainWalletAddress = typeof record.mainWalletAddress === "string" ? record.mainWalletAddress : undefined;
+  if (mainWalletAddress !== undefined && !isValidClassicAddress(mainWalletAddress)) throw new TypeError("The main XRPL Testnet wallet address is invalid.");
   const registry = record.registry as Record<string, unknown>;
   if (Object.keys(registry).some((key) => !["allocations", "payees"].includes(key)) || !Array.isArray(registry.allocations) || !Array.isArray(registry.payees) || registry.allocations.length > 100 || registry.payees.length > 250) throw new TypeError("Workspace payment registry is invalid.");
   const allocations = registry.allocations.map(parseWorkspaceAllocation);
   const payees = registry.payees.map(parseWorkspacePayee);
-  if (!allocations.length) throw new TypeError("Create and connect at least one allocation wallet before asking Alloc-X to pay.");
+  if (!allocations.length && !mainWalletAddress) throw new TypeError("Connect the main wallet for salary payments or register an allocation wallet for other payments.");
   if (!payees.length) throw new TypeError("Register the intended payee before asking Alloc-X to pay.");
-  return { message, ...(sourceAccount ? { sourceAccount } : {}), registry: { allocations, payees } };
+  return { message, ...(sourceAccount ? { sourceAccount } : {}), ...(mainWalletAddress ? { mainWalletAddress } : {}), registry: { allocations, payees } };
 }
 
 function parseWorkspaceAllocation(value: unknown): WorkspaceAllocationInput {
@@ -681,6 +698,25 @@ function resolveAgentPayment(input: AgentPaymentRequest) {
   if (!payeeMatches.length) throw new TypeError("Name one registered payee exactly as it appears in the Payees section.");
   if (payeeMatches.length > 1 && payeeMatches[0]!.name.length === payeeMatches[1]!.name.length) throw new TypeError("The instruction matches more than one payee. Use the complete registered name.");
   const payee = payeeMatches[0]!;
+  // Payroll has an explicit, server-side funding boundary: only a named
+  // registered employee and an instruction containing salary/payroll/wages
+  // can use the connected main wallet. Other instructions cannot select it.
+  if (/\b(salary|salaries|payroll|wages?)\b/iu.test(input.message)) {
+    if (payee.type !== "EMPLOYEE") throw new TypeError("Salary payments require a registered employee payee.");
+    if (!input.mainWalletAddress) throw new TypeError("Connect the main XRPL Testnet wallet and enable its payroll signer before paying salaries.");
+    if (input.sourceAccount && input.sourceAccount !== input.mainWalletAddress) throw new TypeError("Salary payments must be paid from the main wallet.");
+    if (payee.walletAddress === input.mainWalletAddress) throw new TypeError("The main wallet cannot pay itself.");
+    const allocation: WorkspaceAllocationInput = {
+      allocationId: "main_wallet_payroll", name: "Main wallet payroll", category: "Payroll",
+      purpose: "Employee salary payments", spendingRule: "Registered employees only",
+      walletAddress: input.mainWalletAddress,
+    };
+    return {
+      amount, amountDrops, payee, allocation, sourceKind: "MAIN_WALLET_PAYROLL" as const,
+      beneficiaryId: stableIdentifier("ben", payee.payeeId),
+      allocationId: stableIdentifier("alloc", allocation.allocationId),
+    };
+  }
   const linked = input.registry.allocations.filter((allocation) => allocation.walletAddress);
   if (!linked.length) throw new TypeError("Connect an XRPL Testnet wallet to an allocation before asking Alloc-X to pay.");
   const contextTokens = meaningfulTokens(`${input.message} ${payee.name} ${payee.role}`);
@@ -698,6 +734,7 @@ function resolveAgentPayment(input: AgentPaymentRequest) {
     amountDrops,
     payee,
     allocation,
+    sourceKind: "ALLOCATION" as const,
     beneficiaryId: stableIdentifier("ben", payee.payeeId),
     allocationId: stableIdentifier("alloc", allocation.allocationId),
   };
