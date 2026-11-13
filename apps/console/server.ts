@@ -121,7 +121,7 @@ export async function createConsoleServer(options: ConsoleServerOptions = {}): P
       if (credentials !== "local-console-service") throw new Error("ApprovalLayer request was not authenticated.");
       return {
         issuer: "alloc-x-console", audience: "approval-layer", subjectId: "principal_console_service", organizationId,
-        subjectKind: "service" as const, sessionId: "session_local_console", authenticatedAt: now(), methods: ["service-mtls"],
+        subjectKind: "service" as const, sessionId: "session_local_console", authenticatedAt: now(), methods: ["service-mtls"] as const,
       };
     },
   };
