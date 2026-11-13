@@ -6,7 +6,7 @@
   "description": "Alloc-X treasury and security operator console.",
   "scripts": {
     "start": "node --use-system-ca server.ts",
-    "test": "node --test --test-isolation=none test/server.test.ts"
+    "test": "node --test --test-isolation=none test/server.test.ts test/workspace-registry.test.ts"
   },
   "dependencies": {
     "@scure/bip32": "^2.0.1",

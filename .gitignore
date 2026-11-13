@@ -157,3 +157,5 @@ vite.config.ts.timestamp-*
 # Operating system metadata
 .DS_Store
 Thumbs.db
+.vercel
+.env*
